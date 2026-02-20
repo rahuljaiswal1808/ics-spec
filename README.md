@@ -63,6 +63,35 @@ An instruction is ICS-compliant if it satisfies all rules in `ICS-v0.1.md`. See 
 | `ICS-v0.1.md` | The specification |
 | `RATIONALE.md` | Why ICS exists and how to interpret it |
 | `APPENDIX-A.md` | Full conformant example with annotations |
+| `experiments.md` | Empirical evidence for the token-savings claim (§2.2, §2.4) |
+
+## Tools
+
+| File | Purpose |
+|------|---------|
+| `ics_validator.py` | Reference validator — checks ICS compliance, reports violations |
+| `ics_token_analyzer.py` | Token analyzer — proves §2.2/§2.4 savings claim offline (no API key needed) |
+| `ics_live_test.py` | Live tester — validates savings with real Anthropic API calls using your key |
+
+### Quick start: live token test
+
+```bash
+pip install anthropic
+export ANTHROPIC_API_KEY=sk-ant-...
+
+# Run against the built-in APPENDIX-A example (3 invocations)
+python ics_live_test.py
+
+# Run against your own ICS instruction file
+python ics_live_test.py path/to/my_instruction.txt --invocations 10
+
+# Preview what would be sent without spending tokens
+python ics_live_test.py --dry-run
+```
+
+The tester sends two requests per invocation — one **naive** (all layers flat, no caching) and one **ICS** (permanent layers marked `cache_control=ephemeral`) — and reads real token counts from the API response's `usage` field, including `cache_creation_input_tokens` and `cache_read_input_tokens`.
+
+> **Note on cache activation:** Anthropic prompt caching requires the cached block to be ≥ 1024 tokens for most models. The built-in APPENDIX-A examples are small demonstration snippets and will not trigger cache hits. Supply a production-sized instruction file to observe real `cache_read_input_tokens` savings in the ICS column.
 
 ---
 
