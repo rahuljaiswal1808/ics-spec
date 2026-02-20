@@ -71,8 +71,9 @@ SESSION    = {"SESSION_STATE"}
 INVOCATION = {"TASK_PAYLOAD", "OUTPUT_CONTRACT"}
 
 # Minimum tokens Anthropic requires in the cached block for caching to activate.
-# Conservative lower bound — some models require 2048; check current docs.
-CACHE_MIN_TOKENS = 1024
+# Verified empirically: claude-haiku-4-5-20251001 requires ≥ ~4096 tokens.
+# (Claude 3 models required 1024; Claude 3.5 models required 2048.)
+CACHE_MIN_TOKENS = 4096
 
 # ---------------------------------------------------------------------------
 # Approximate per-model pricing (USD per million tokens).

@@ -74,6 +74,89 @@ Core data models:
     created_at      TIMESTAMPTZ
     resolved_at     TIMESTAMPTZ nullable
 
+  WebhookEndpoint
+    id              UUID
+    account_id      UUID        FK → Account
+    url             TEXT        caller-supplied HTTPS endpoint; validated on registration
+    secret          TEXT        HMAC-SHA256 signing secret; stored encrypted at rest
+    event_types     TEXT[]      subscribed event type codes (e.g. payment.settled)
+    status          ENUM        ACTIVE | DISABLED | SUSPENDED
+    failure_count   INTEGER     consecutive delivery failures; reset on success
+    created_at      TIMESTAMPTZ
+    last_delivered_at TIMESTAMPTZ nullable
+
+  WebhookDelivery
+    id              UUID
+    endpoint_id     UUID        FK → WebhookEndpoint
+    event_id        UUID        FK → EventLog
+    attempt_number  INTEGER     1-indexed; max MAX_ATTEMPTS (5)
+    http_status     INTEGER     nullable; null if no response received
+    response_body   TEXT        nullable; truncated at 4 KB
+    delivered_at    TIMESTAMPTZ
+    next_retry_at   TIMESTAMPTZ nullable; null on final attempt or success
+
+  EventLog
+    id              UUID
+    event_type      VARCHAR(64) dot-separated hierarchy (e.g. payment.status.settled)
+    payload         JSONB       canonical event payload; schema versioned by event_type
+    source_id       UUID        FK → Payment or other source entity
+    source_type     VARCHAR(32) discriminator for source_id (e.g. 'payment', 'account')
+    published_at    TIMESTAMPTZ
+    partition_key   VARCHAR(64) used for SNS/SQS routing; derived from source_id prefix
+
+  Settlement
+    id              UUID
+    settlement_date DATE        business date this netting covers
+    rail            ENUM        ACH | SWIFT | SEPA | RTP
+    direction       ENUM        DEBIT | CREDIT
+    gross_amount    BIGINT      sum of all payment amounts before netting
+    net_amount      BIGINT      actual funds movement after netting
+    currency        CHAR(3)
+    file_reference  VARCHAR(64) external settlement file identifier (e.g. NACHA trace number)
+    status          ENUM        PENDING | SUBMITTED | CONFIRMED | FAILED
+    created_at      TIMESTAMPTZ
+    confirmed_at    TIMESTAMPTZ nullable
+
+  FeeRule
+    id              UUID
+    account_id      UUID        FK → Account; nullable for platform-wide rules
+    rail            ENUM        ACH | SWIFT | SEPA | RTP | ALL
+    fee_type        ENUM        FLAT | PERCENTAGE | TIERED
+    flat_amount     BIGINT      nullable; used when fee_type = FLAT
+    percentage_bps  INTEGER     nullable; basis points; used when fee_type = PERCENTAGE
+    min_fee_cents   BIGINT      floor applied after percentage calculation
+    max_fee_cents   BIGINT      nullable; cap applied after percentage calculation
+    effective_from  DATE
+    effective_until DATE        nullable; null means currently active
+
+Event type registry (canonical list; all event_type codes used in EventLog and WebhookEndpoint):
+  payment.created             — new Payment record inserted
+  payment.submitted           — payment submitted to rail adapter
+  payment.clearing            — clearing acknowledgement received from rail
+  payment.settled             — payment confirmed settled
+  payment.failed              — terminal failure; failure_reason set
+  payment.reversed            — reversal posted; matching LedgerEntries created
+  account.balance_updated     — ledger_balance or available_balance changed
+  account.suspended           — account status set to SUSPENDED
+  account.closed              — account status set to CLOSED
+  compliance.alert_created    — new ComplianceAlert raised
+  compliance.alert_resolved   — ComplianceAlert status set to CLEARED
+  compliance.sar_filed        — SAR submitted to FinCEN
+  webhook.exhausted           — WebhookDelivery attempt_number == MAX_ATTEMPTS with failure
+  settlement.submitted        — Settlement file sent to rail operator
+  settlement.confirmed        — Settlement confirmed by rail operator
+
+API surface (gateway/v2/; all routes require Bearer token authentication):
+  POST   /v2/payments                  — create payment; returns Payment (PENDING)
+  GET    /v2/payments/{id}             — get payment by UUID
+  GET    /v2/payments                  — list payments; supports cursor pagination
+  POST   /v2/payments/{id}/reverse     — initiate reversal; idempotent
+  GET    /v2/accounts/{id}/balance     — current and available balance
+  GET    /v2/accounts/{id}/statement   — paginated ledger entries for account
+  POST   /v2/webhooks                  — register webhook endpoint
+  DELETE /v2/webhooks/{id}            — deregister webhook endpoint
+  GET    /v2/webhooks/{id}/deliveries  — delivery history with attempt details
+
 Architectural invariants:
   1. All monetary amounts are stored and transmitted as BIGINT minor units
      (cents for USD, pence for GBP, etc.). Float arithmetic on money is
@@ -99,6 +182,34 @@ Architectural invariants:
      procedures documented in infra/RUNBOOK.md.
   8. All database schema changes require an Alembic migration file.
      Schema MUST NOT be modified by application code at runtime.
+  9. Webhook signatures use HMAC-SHA256 over the raw request body with the
+     endpoint's stored secret. The signature is sent in the
+     X-Payment-Signature header as hex. Verification logic lives in
+     src/notifications/signing.py:verify_signature() and must not be
+     bypassed or reimplemented inline.
+  10. EventLog entries are immutable once written. No UPDATE or DELETE on
+      eventlog is permitted. Corrections are modelled as new events.
+  11. All database queries involving Payment.status or LedgerEntry must go
+      through SQLAlchemy ORM models defined in src/shared/models.py. Raw
+      SQL fragments that reference these tables are prohibited except in
+      Alembic migration files.
+  12. Cursor-based pagination is the only supported pagination scheme for
+      list endpoints. Offset pagination is prohibited due to inconsistency
+      under concurrent writes. Cursor tokens are opaque base64-encoded
+      composites of (created_at, id); their internal format must not be
+      relied upon by callers.
+  13. Fee calculation is the sole responsibility of src/ledger/fees.py.
+      No other module computes fees. FeeRule evaluation is performed inside
+      a database transaction that also posts the corresponding LedgerEntries
+      so that fee posting is atomic with the triggering payment transition.
+  14. All async I/O (database, Redis, HTTP) uses Python asyncio with
+      SQLAlchemy async sessions (AsyncSession). Synchronous blocking calls
+      inside async request handlers are prohibited.
+  15. PII redaction is enforced by src/shared/logging.py:RedactingFormatter.
+      This formatter is the only logger configured for application code.
+      Logger instances obtained via logging.getLogger() are acceptable only
+      if the root handler is the RedactingFormatter; direct print() to stdout
+      is prohibited in production code.
 
 External dependencies (pinned in pyproject.toml):
   boto3             — AWS SDK (SQS, SNS, Secrets Manager, S3)
@@ -108,6 +219,37 @@ External dependencies (pinned in pyproject.toml):
   httpx             — async HTTP client (used for rail adapters and webhooks)
   cryptography      — payload signing and key management
   pytest / pytest-asyncio — test framework
+  tenacity          — retry logic for external calls (rail adapters, SNS publish)
+  structlog         — structured JSON logging; wraps stdlib logging
+  redis-py          — Redis client (async); used for idempotency keys and rate limiting
+
+Configuration and secrets:
+  All runtime configuration is loaded from AWS Secrets Manager via
+  src/shared/config.py:get_config(). The config module caches values for
+  the lifetime of the Lambda execution environment. Direct use of
+  os.environ for sensitive values (credentials, signing keys, connection
+  strings) is prohibited; use get_config() exclusively.
+
+  Key configuration keys (as retrieved from Secrets Manager):
+    DATABASE_URL          — async PostgreSQL connection string
+    REDIS_URL             — ElastiCache connection string
+    SNS_TOPIC_ARN         — payment events SNS topic; used by notifications/
+    OFAC_API_KEY          — credential for OFAC screening provider
+    WEBHOOK_SIGNING_KEY   — master key; per-endpoint secrets derived from it
+    SYNC_SCREENING_THRESHOLD_CENTS — compliance screening mode boundary (default: 1_000_000)
+    MAX_WEBHOOK_ATTEMPTS  — max delivery retries before webhook.exhausted (default: 5)
+
+Observability:
+  - All Lambda functions emit structured logs via structlog. Log level is
+    controlled by the LOG_LEVEL environment variable (default: INFO).
+  - Distributed traces use AWS X-Ray. Trace IDs are propagated in the
+    X-Amzn-Trace-Id header and attached to all outbound HTTP requests via
+    the httpx X-Ray middleware in src/shared/http.py.
+  - Custom CloudWatch metrics are published by src/shared/metrics.py using
+    the EMF (Embedded Metrics Format). Key metrics: payment.created,
+    payment.settled, payment.failed, webhook.delivered, webhook.exhausted.
+  - Alarms are defined in infra/cdk/alarms.py. Do not modify alarm
+    thresholds without updating the corresponding CDK stack.
 
 Compliance context:
   - Subject to FinCEN BSA/AML program requirements (31 CFR Part 1020).
