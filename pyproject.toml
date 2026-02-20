@@ -22,12 +22,14 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-# For ics-live-test (real Anthropic API calls)
-live = ["anthropic>=0.40"]
+# For ics-live-test with Anthropic
+anthropic = ["anthropic>=0.40"]
+# For ics-live-test with OpenAI
+openai = ["openai>=1.0"]
 # For exact BPE token counting in ics-analyze --exact
 exact = ["tiktoken>=0.7"]
 # Install everything
-all = ["anthropic>=0.40", "tiktoken>=0.7"]
+all = ["anthropic>=0.40", "openai>=1.0", "tiktoken>=0.7"]
 
 [project.scripts]
 ics-validate  = "ics_validator:main"
