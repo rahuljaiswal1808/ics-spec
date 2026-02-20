@@ -33,9 +33,67 @@ LAYER_ORDER = [
     "OUTPUT_CONTRACT",
 ]
 
+# Matches a well-formed directive line per the §3.2 scope grammar.
+# Groups: keyword, action, qualifier_keyword (opt), target (opt), condition (opt)
 DIRECTIVE_PATTERN = re.compile(
     r"^\s*(ALLOW|DENY|REQUIRE)\s+.+", re.IGNORECASE
 )
+
+# Qualifier keywords that introduce a scope target per the §3.2 grammar.
+_QUALIFIER_WORDS = {"WITHIN", "ON", "WITH", "UNLESS"}
+
+
+def _check_directive_grammar(line: str):
+    """
+    Validate a directive line against the §3.2 scope grammar.
+    Returns an error string, or None if the line is valid.
+
+    Grammar (enforced):
+        directive ::= KEYWORD action [qualifier] [IF condition]
+        qualifier ::= QWORD target
+        QWORD     ::= WITHIN | ON | WITH | UNLESS
+        action, target, condition ::= one or more whitespace-separated words
+    """
+    tokens = line.split()
+    # tokens[0] is the directive keyword (already confirmed by DIRECTIVE_PATTERN)
+    rest = tokens[1:]
+
+    if not rest:
+        return f"Directive '{tokens[0]}' has no action"
+
+    # Find the first token that is an exact qualifier keyword (case-insensitive).
+    # We match whole tokens only, so 'ON' in 'modification' is never a qualifier.
+    qual_idx = next(
+        (i for i, t in enumerate(rest) if t.upper() in _QUALIFIER_WORDS),
+        None,
+    )
+
+    # Find IF token — must appear after the qualifier (if any).
+    search_from = (qual_idx + 1) if qual_idx is not None else 0
+    if_idx = next(
+        (search_from + i for i, t in enumerate(rest[search_from:]) if t.upper() == "IF"),
+        None,
+    )
+
+    # Action must be non-empty (tokens between keyword and qualifier/IF/end).
+    action_end = qual_idx if qual_idx is not None else (if_idx if if_idx is not None else len(rest))
+    if action_end == 0:
+        return "Action must be non-empty after the directive keyword"
+
+    # Qualifier must be followed by a non-empty target.
+    if qual_idx is not None:
+        target_end = if_idx if if_idx is not None else len(rest)
+        if qual_idx + 1 >= target_end:
+            qword = rest[qual_idx]
+            return (
+                f"Qualifier keyword '{qword}' must be followed by a non-empty target"
+            )
+
+    # IF must be followed by a non-empty condition.
+    if if_idx is not None and if_idx + 1 >= len(rest):
+        return "'IF' must be followed by a non-empty condition"
+
+    return None
 
 OUTPUT_CONTRACT_FIELDS = {"format", "schema", "variance", "on_failure"}
 
@@ -272,6 +330,8 @@ def step5_capability_declaration_syntax(
     """
     Step 5: CAPABILITY_DECLARATION uses only ALLOW, DENY, or REQUIRE directives.
     Blank lines and comment lines (starting with #) are permitted.
+    Also enforces the §3.2 scope grammar: qualifier keywords must be followed
+    by a non-empty target; IF must be followed by a non-empty condition.
     """
     cd_layers = [l for l in layers if l.name == "CAPABILITY_DECLARATION"]
     for layer in cd_layers:
@@ -286,6 +346,14 @@ def step5_capability_declaration_syntax(
                     5, "§3.2",
                     f"CAPABILITY_DECLARATION contains a line that is not a valid "
                     f"ALLOW, DENY, or REQUIRE directive: '{stripped}'"
+                )
+                continue
+            # Enforce scope grammar (§3.2 normative)
+            grammar_error = _check_directive_grammar(stripped)
+            if grammar_error:
+                result.add_violation(
+                    5, "§3.2 (scope grammar)",
+                    f"{grammar_error}: '{stripped}'"
                 )
 
 
@@ -485,6 +553,30 @@ TESTS = [
         ),
         "expect_compliant": False,
         "expect_violation_rules": ["§3.4 / §4.2"],
+    },
+    {
+        "name": "Directive with WITHIN and no target is rejected",
+        "input": COMPLIANT_EXAMPLE.replace(
+            "ALLOW   file modification WITHIN src/orders/",
+            "ALLOW   file modification WITHIN"
+        ),
+        "expect_compliant": False,
+        "expect_violation_rules": ["§3.2 (scope grammar)"],
+    },
+    {
+        "name": "Directive with IF and no condition is rejected",
+        "input": COMPLIANT_EXAMPLE.replace(
+            "ALLOW   file creation WITHIN src/orders/ IF new file has corresponding test",
+            "ALLOW   file creation WITHIN src/orders/ IF"
+        ),
+        "expect_compliant": False,
+        "expect_violation_rules": ["§3.2 (scope grammar)"],
+    },
+    {
+        "name": "Directive with WITHIN and valid target passes",
+        "input": COMPLIANT_EXAMPLE,
+        "expect_compliant": True,
+        "expect_violation_rules": [],
     },
     {
         "name": "Unknown layer name is rejected",

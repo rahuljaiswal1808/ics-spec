@@ -144,14 +144,20 @@ From invocation 2 onward, the ICS `cache_read_input_tokens` are billed at
 **0.10×** the normal rate (90% discount), on top of the structural saving
 from not re-sending the permanent layers at full rate.
 
-**Status:** Not yet run — requires `ANTHROPIC_API_KEY` and an instruction file
-with permanent layers ≥ 1024 tokens (Anthropic cache activation threshold).
+**Status:** Not yet run — requires `ANTHROPIC_API_KEY`.
 The tool is ready: `pip install anthropic && python ics_live_test.py <file>`.
 
+**Reference file:** `examples/payments-platform.ics` is a production-sized
+instruction whose permanent layers total ~1,920 tokens (above the 1,024-token
+cache threshold). Use it as the target file to observe real cache hits:
+
+```bash
+python ics_live_test.py examples/payments-platform.ics --invocations 10
+```
+
 **Activation threshold note:** The built-in APPENDIX-A examples have ~200
-tokens in their permanent layers — below the threshold. A production
-instruction with a full `IMMUTABLE_CONTEXT` (schema definitions, codebase
-description, architectural invariants) will typically reach or exceed it.
+tokens in their permanent layers — below the threshold. `examples/payments-platform.ics`
+was written specifically to clear it.
 
 ---
 

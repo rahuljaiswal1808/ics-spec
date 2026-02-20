@@ -1,0 +1,36 @@
+name: ICS CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  test:
+    name: Validate and test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Run validator test suite
+        run: python ics_validator.py --test
+
+      - name: Run token analyzer test suite
+        run: python ics_token_analyzer.py --test
+
+      - name: Validate example files
+        run: |
+          set -e
+          for f in examples/*.ics; do
+            echo "Validating $f ..."
+            python ics_validator.py "$f"
+          done
+          echo "All example files are ICS-compliant."

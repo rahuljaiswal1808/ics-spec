@@ -1,0 +1,182 @@
+###ICS:IMMUTABLE_CONTEXT###
+System: B2B Payments Platform
+Owner: Payments Engineering — Core Infrastructure team
+Language: Python 3.12
+Runtime: AWS Lambda (per-service); PostgreSQL 15 (RDS); Redis 7 (ElastiCache)
+
+Repository layout:
+  src/
+    ledger/         — double-entry ledger; source of truth for all balances
+    ledger/entries/ — entry creation, idempotency, reversal logic
+    ledger/query/   — balance reads, statement generation, reconciliation
+    rails/          — payment rail adapters (ACH, SWIFT, SEPA, RTP)
+    rails/ach/      — NACHA-format file generation and inbound processing
+    rails/swift/    — MT103 / ISO 20022 message construction
+    rails/sepa/     — SEPA Credit Transfer and Direct Debit
+    rails/rtp/      — Real-Time Payments (TCH RTP network)
+    gateway/        — external-facing API; request validation, auth, rate limiting
+    gateway/v1/     — deprecated; read-only; no new features
+    gateway/v2/     — current stable API surface
+    gateway/v3/     — in development; feature-flagged; not yet GA
+    compliance/     — AML screening, sanctions checking, transaction monitoring
+    compliance/aml/ — rule engine, alert generation, SAR filing helpers
+    compliance/ofac/— OFAC SDN list integration and hit-resolution workflow
+    settlement/     — end-of-day netting, settlement file generation, reconciliation
+    notifications/  — event publishing (SNS), webhook delivery, retry logic
+    shared/         — shared models, utilities, error types, config loaders
+  infra/
+    cdk/            — AWS CDK stacks (Lambda, RDS, ElastiCache, SQS, SNS)
+    migrations/     — Alembic migrations; one file per schema change
+  tests/
+    unit/           — per-module unit tests; no I/O; pytest
+    integration/    — tests against localstack + test Postgres; pytest
+    e2e/            — full-stack tests; run in CI staging only
+
+Core data models:
+  Payment           — represents a single payment instruction
+    id              UUID        primary key
+    idempotency_key VARCHAR(64) unique per caller; prevents duplicate submissions
+    status          ENUM        PENDING | SUBMITTED | CLEARING | SETTLED | FAILED | REVERSED
+    rail            ENUM        ACH | SWIFT | SEPA | RTP
+    amount_cents    BIGINT      always in minor units; never float
+    currency        CHAR(3)     ISO 4217
+    originator_id   UUID        FK → Account
+    beneficiary_id  UUID        FK → Account
+    created_at      TIMESTAMPTZ
+    settled_at      TIMESTAMPTZ nullable; set on SETTLED transition
+    failure_reason  TEXT        nullable; set on FAILED or REVERSED
+    metadata        JSONB       caller-supplied; max 4 KB; not indexed
+
+  Account
+    id              UUID        primary key
+    entity_id       UUID        FK → LegalEntity
+    currency        CHAR(3)
+    ledger_balance  BIGINT      denormalised from ledger; updated on entry post
+    available_balance BIGINT    ledger_balance minus pending debits
+    account_type    ENUM        OPERATING | ESCROW | FEE | RESERVE
+    status          ENUM        ACTIVE | SUSPENDED | CLOSED
+
+  LedgerEntry
+    id              UUID
+    payment_id      UUID        FK → Payment; nullable for manual adjustments
+    account_id      UUID        FK → Account
+    entry_type      ENUM        DEBIT | CREDIT
+    amount_cents    BIGINT
+    currency        CHAR(3)
+    posted_at       TIMESTAMPTZ
+
+  ComplianceAlert
+    id              UUID
+    payment_id      UUID        FK → Payment
+    rule_id         VARCHAR(32) identifies the triggered AML/OFAC rule
+    severity        ENUM        LOW | MEDIUM | HIGH | CRITICAL
+    status          ENUM        OPEN | UNDER_REVIEW | CLEARED | ESCALATED
+    created_at      TIMESTAMPTZ
+    resolved_at     TIMESTAMPTZ nullable
+
+Architectural invariants:
+  1. All monetary amounts are stored and transmitted as BIGINT minor units
+     (cents for USD, pence for GBP, etc.). Float arithmetic on money is
+     prohibited throughout the codebase.
+  2. Every payment must have a corresponding pair of balanced ledger entries
+     (one DEBIT, one CREDIT) before its status can advance past PENDING.
+     The ledger is the authoritative record; the Payment.status field is
+     derived from it.
+  3. Status transitions are append-only state machine steps. Status MAY
+     NOT be updated by direct SQL; all transitions go through
+     src/ledger/entries/transitions.py:apply_transition().
+  4. Idempotency is enforced at the gateway layer. Duplicate submissions
+     with the same idempotency_key return the original response verbatim;
+     they do not create new records.
+  5. OFAC and AML screening are synchronous for payments below $10,000.
+     Payments at or above $10,000 are held in PENDING until compliance
+     clears or flags them. This threshold is defined in
+     src/compliance/config.py:SYNC_SCREENING_THRESHOLD_CENTS.
+  6. gateway/v1/ is read-only. No writes, no new routes, no schema changes.
+     It proxies reads to v2 handlers.
+  7. CDK stacks are the authoritative infrastructure definition.
+     Manual changes to AWS resources are prohibited outside of break-glass
+     procedures documented in infra/RUNBOOK.md.
+  8. All database schema changes require an Alembic migration file.
+     Schema MUST NOT be modified by application code at runtime.
+
+External dependencies (pinned in pyproject.toml):
+  boto3             — AWS SDK (SQS, SNS, Secrets Manager, S3)
+  sqlalchemy        — ORM and query builder (async mode)
+  alembic           — schema migrations
+  pydantic v2       — request/response validation
+  httpx             — async HTTP client (used for rail adapters and webhooks)
+  cryptography      — payload signing and key management
+  pytest / pytest-asyncio — test framework
+
+Compliance context:
+  - Subject to FinCEN BSA/AML program requirements (31 CFR Part 1020).
+  - OFAC SDN list screening required on all payment parties before submission.
+  - Suspicious Activity Reports (SARs) are filed via src/compliance/aml/sar.py.
+  - PII fields (originator/beneficiary names, account numbers) must not appear
+    in application logs. Log redaction is enforced by
+    src/shared/logging.py:RedactingFormatter.
+###END:IMMUTABLE_CONTEXT###
+
+###ICS:CAPABILITY_DECLARATION###
+# Permitted actions
+ALLOW   read access WITHIN src/
+ALLOW   read access WITHIN tests/
+ALLOW   file modification WITHIN src/ledger/
+ALLOW   file modification WITHIN src/notifications/
+ALLOW   file modification WITHIN src/shared/
+ALLOW   file creation WITHIN src/ledger/ IF corresponding unit test added in tests/unit/
+ALLOW   file creation WITHIN src/shared/ IF corresponding unit test added in tests/unit/
+ALLOW   new Alembic migration file creation WITHIN infra/migrations/
+ALLOW   addition of new fields to existing Pydantic models WITHIN src/shared/
+
+# Prohibited actions
+DENY    modification of src/gateway/
+DENY    modification of src/rails/
+DENY    modification of src/compliance/
+DENY    modification of src/settlement/
+DENY    modification of infra/
+DENY    modification of any file WITHIN tests/
+DENY    deletion of any migration file WITHIN infra/migrations/
+DENY    introduction of float arithmetic ON monetary values
+DENY    direct SQL UPDATE of Payment.status UNLESS routed through apply_transition()
+DENY    introduction of new external dependencies UNLESS approved in pyproject.toml
+DENY    logging of PII fields
+
+# Mandatory requirements
+REQUIRE type annotations ON all new functions and methods
+REQUIRE docstring ON all new public functions and classes
+REQUIRE backward compatibility WITH gateway/v2/ API contracts
+REQUIRE idempotency handling ON all new payment-creating code paths
+REQUIRE unit test coverage ON all new ledger entry logic
+###END:CAPABILITY_DECLARATION###
+
+###ICS:SESSION_STATE###
+[2025-01-08T11:00Z] Task: add webhook retry-exhaustion notifications to src/notifications/
+[2025-01-08T11:05Z] Confirmed: src/notifications/webhooks.py:deliver() already tracks attempt count in Redis
+[2025-01-08T11:12Z] Decision: exhaustion threshold is 5 attempts (matches existing MAX_ATTEMPTS constant)
+[2025-01-08T11:18Z] Confirmed: SNS topic ARN for payment events is loaded from config via get_sns_topic_arn()
+[2025-01-08T11:24Z] Decision: exhaustion event payload must include payment_id, webhook_url, attempt_count, last_error
+[2025-01-08T11:30Z] Confirmed: no schema migration required; new notification type is a runtime enum value
+###END:SESSION_STATE###
+
+###ICS:TASK_PAYLOAD###
+Add a retry-exhaustion event to src/notifications/webhooks.py.
+
+When deliver() has exhausted all retry attempts (attempt_count == MAX_ATTEMPTS)
+and the final attempt has failed, publish a WEBHOOK_EXHAUSTED event to the
+payments SNS topic using the existing get_sns_topic_arn() helper.
+
+The event payload must conform to the schema established in SESSION_STATE.
+The existing delivery logic, retry schedule, and Redis tracking must not change.
+###END:TASK_PAYLOAD###
+
+###ICS:OUTPUT_CONTRACT###
+format:     unified diff
+schema:     standard unified diff against current HEAD; one hunk per modified function;
+            no changes outside src/notifications/webhooks.py unless a new helper module
+            in src/shared/ is strictly required
+variance:   diff header timestamps MAY be omitted; no other variance permitted
+on_failure: return plain text with prefix "BLOCKED:" and a single sentence naming
+            the CAPABILITY_DECLARATION constraint that prevents execution
+###END:OUTPUT_CONTRACT###
