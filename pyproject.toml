@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "ics-tools"
+version = "0.1.0"
+description = "Reference tools for the Instruction Contract Specification (ICS)"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+keywords = ["llm", "prompt", "instruction", "specification", "token"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+
+# No required dependencies — the validator and analyzer work with stdlib only.
+dependencies = []
+
+[project.optional-dependencies]
+# For ics-live-test (real Anthropic API calls)
+live = ["anthropic>=0.40"]
+# For exact BPE token counting in ics-analyze --exact
+exact = ["tiktoken>=0.7"]
+# Install everything
+all = ["anthropic>=0.40", "tiktoken>=0.7"]
+
+[project.scripts]
+ics-validate  = "ics_validator:main"
+ics-analyze   = "ics_token_analyzer:main"
+ics-live-test = "ics_live_test:main"
+
+[tool.setuptools]
+py-modules = ["ics_validator", "ics_token_analyzer", "ics_live_test"]
+
+[project.urls]
+Repository = "https://github.com/rahuljaiswal1808/ics-spec"

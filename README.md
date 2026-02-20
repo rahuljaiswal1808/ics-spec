@@ -62,8 +62,30 @@ An instruction is ICS-compliant if it satisfies all rules in `ICS-v0.1.md`. See 
 |------|---------|
 | `ICS-v0.1.md` | The specification |
 | `RATIONALE.md` | Why ICS exists and how to interpret it |
-| `APPENDIX-A.md` | Full conformant example with annotations |
+| `APPENDIX-A.md` | Annotated examples: code refactoring, analytics, session reset |
+| `APPENDIX-B.md` | Annotated examples: Terraform infrastructure, schema migration review |
 | `experiments.md` | Empirical evidence for the token-savings claim (§2.2, §2.4) |
+
+### Quick start: installation
+
+```bash
+# Stdlib only — validator and token analyzer, no external deps
+pip install .
+
+# With live API testing support
+pip install ".[live]"
+
+# With exact BPE token counting
+pip install ".[all]"
+```
+
+Once installed, the three tools are available as CLI commands:
+
+```bash
+ics-validate  my_instruction.txt
+ics-analyze   my_instruction.txt --invocations 10
+ics-live-test my_instruction.txt --invocations 5   # requires ANTHROPIC_API_KEY
+```
 
 ## Tools
 
