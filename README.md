@@ -63,6 +63,7 @@ An instruction is ICS-compliant if it satisfies all rules in `ICS-v0.1.md`. See 
 | `ICS-v0.1.md` | The specification |
 | `RATIONALE.md` | Why ICS exists and how to interpret it |
 | `APPENDIX-A.md` | Full conformant example with annotations |
+| `experiments.md` | Empirical evidence for the token-savings claim (§2.2, §2.4) |
 
 ## Tools
 
