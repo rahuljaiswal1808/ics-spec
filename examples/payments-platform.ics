@@ -1,0 +1,324 @@
+###ICS:IMMUTABLE_CONTEXT###
+System: B2B Payments Platform
+Owner: Payments Engineering — Core Infrastructure team
+Language: Python 3.12
+Runtime: AWS Lambda (per-service); PostgreSQL 15 (RDS); Redis 7 (ElastiCache)
+
+Repository layout:
+  src/
+    ledger/         — double-entry ledger; source of truth for all balances
+    ledger/entries/ — entry creation, idempotency, reversal logic
+    ledger/query/   — balance reads, statement generation, reconciliation
+    rails/          — payment rail adapters (ACH, SWIFT, SEPA, RTP)
+    rails/ach/      — NACHA-format file generation and inbound processing
+    rails/swift/    — MT103 / ISO 20022 message construction
+    rails/sepa/     — SEPA Credit Transfer and Direct Debit
+    rails/rtp/      — Real-Time Payments (TCH RTP network)
+    gateway/        — external-facing API; request validation, auth, rate limiting
+    gateway/v1/     — deprecated; read-only; no new features
+    gateway/v2/     — current stable API surface
+    gateway/v3/     — in development; feature-flagged; not yet GA
+    compliance/     — AML screening, sanctions checking, transaction monitoring
+    compliance/aml/ — rule engine, alert generation, SAR filing helpers
+    compliance/ofac/— OFAC SDN list integration and hit-resolution workflow
+    settlement/     — end-of-day netting, settlement file generation, reconciliation
+    notifications/  — event publishing (SNS), webhook delivery, retry logic
+    shared/         — shared models, utilities, error types, config loaders
+  infra/
+    cdk/            — AWS CDK stacks (Lambda, RDS, ElastiCache, SQS, SNS)
+    migrations/     — Alembic migrations; one file per schema change
+  tests/
+    unit/           — per-module unit tests; no I/O; pytest
+    integration/    — tests against localstack + test Postgres; pytest
+    e2e/            — full-stack tests; run in CI staging only
+
+Core data models:
+  Payment           — represents a single payment instruction
+    id              UUID        primary key
+    idempotency_key VARCHAR(64) unique per caller; prevents duplicate submissions
+    status          ENUM        PENDING | SUBMITTED | CLEARING | SETTLED | FAILED | REVERSED
+    rail            ENUM        ACH | SWIFT | SEPA | RTP
+    amount_cents    BIGINT      always in minor units; never float
+    currency        CHAR(3)     ISO 4217
+    originator_id   UUID        FK → Account
+    beneficiary_id  UUID        FK → Account
+    created_at      TIMESTAMPTZ
+    settled_at      TIMESTAMPTZ nullable; set on SETTLED transition
+    failure_reason  TEXT        nullable; set on FAILED or REVERSED
+    metadata        JSONB       caller-supplied; max 4 KB; not indexed
+
+  Account
+    id              UUID        primary key
+    entity_id       UUID        FK → LegalEntity
+    currency        CHAR(3)
+    ledger_balance  BIGINT      denormalised from ledger; updated on entry post
+    available_balance BIGINT    ledger_balance minus pending debits
+    account_type    ENUM        OPERATING | ESCROW | FEE | RESERVE
+    status          ENUM        ACTIVE | SUSPENDED | CLOSED
+
+  LedgerEntry
+    id              UUID
+    payment_id      UUID        FK → Payment; nullable for manual adjustments
+    account_id      UUID        FK → Account
+    entry_type      ENUM        DEBIT | CREDIT
+    amount_cents    BIGINT
+    currency        CHAR(3)
+    posted_at       TIMESTAMPTZ
+
+  ComplianceAlert
+    id              UUID
+    payment_id      UUID        FK → Payment
+    rule_id         VARCHAR(32) identifies the triggered AML/OFAC rule
+    severity        ENUM        LOW | MEDIUM | HIGH | CRITICAL
+    status          ENUM        OPEN | UNDER_REVIEW | CLEARED | ESCALATED
+    created_at      TIMESTAMPTZ
+    resolved_at     TIMESTAMPTZ nullable
+
+  WebhookEndpoint
+    id              UUID
+    account_id      UUID        FK → Account
+    url             TEXT        caller-supplied HTTPS endpoint; validated on registration
+    secret          TEXT        HMAC-SHA256 signing secret; stored encrypted at rest
+    event_types     TEXT[]      subscribed event type codes (e.g. payment.settled)
+    status          ENUM        ACTIVE | DISABLED | SUSPENDED
+    failure_count   INTEGER     consecutive delivery failures; reset on success
+    created_at      TIMESTAMPTZ
+    last_delivered_at TIMESTAMPTZ nullable
+
+  WebhookDelivery
+    id              UUID
+    endpoint_id     UUID        FK → WebhookEndpoint
+    event_id        UUID        FK → EventLog
+    attempt_number  INTEGER     1-indexed; max MAX_ATTEMPTS (5)
+    http_status     INTEGER     nullable; null if no response received
+    response_body   TEXT        nullable; truncated at 4 KB
+    delivered_at    TIMESTAMPTZ
+    next_retry_at   TIMESTAMPTZ nullable; null on final attempt or success
+
+  EventLog
+    id              UUID
+    event_type      VARCHAR(64) dot-separated hierarchy (e.g. payment.status.settled)
+    payload         JSONB       canonical event payload; schema versioned by event_type
+    source_id       UUID        FK → Payment or other source entity
+    source_type     VARCHAR(32) discriminator for source_id (e.g. 'payment', 'account')
+    published_at    TIMESTAMPTZ
+    partition_key   VARCHAR(64) used for SNS/SQS routing; derived from source_id prefix
+
+  Settlement
+    id              UUID
+    settlement_date DATE        business date this netting covers
+    rail            ENUM        ACH | SWIFT | SEPA | RTP
+    direction       ENUM        DEBIT | CREDIT
+    gross_amount    BIGINT      sum of all payment amounts before netting
+    net_amount      BIGINT      actual funds movement after netting
+    currency        CHAR(3)
+    file_reference  VARCHAR(64) external settlement file identifier (e.g. NACHA trace number)
+    status          ENUM        PENDING | SUBMITTED | CONFIRMED | FAILED
+    created_at      TIMESTAMPTZ
+    confirmed_at    TIMESTAMPTZ nullable
+
+  FeeRule
+    id              UUID
+    account_id      UUID        FK → Account; nullable for platform-wide rules
+    rail            ENUM        ACH | SWIFT | SEPA | RTP | ALL
+    fee_type        ENUM        FLAT | PERCENTAGE | TIERED
+    flat_amount     BIGINT      nullable; used when fee_type = FLAT
+    percentage_bps  INTEGER     nullable; basis points; used when fee_type = PERCENTAGE
+    min_fee_cents   BIGINT      floor applied after percentage calculation
+    max_fee_cents   BIGINT      nullable; cap applied after percentage calculation
+    effective_from  DATE
+    effective_until DATE        nullable; null means currently active
+
+Event type registry (canonical list; all event_type codes used in EventLog and WebhookEndpoint):
+  payment.created             — new Payment record inserted
+  payment.submitted           — payment submitted to rail adapter
+  payment.clearing            — clearing acknowledgement received from rail
+  payment.settled             — payment confirmed settled
+  payment.failed              — terminal failure; failure_reason set
+  payment.reversed            — reversal posted; matching LedgerEntries created
+  account.balance_updated     — ledger_balance or available_balance changed
+  account.suspended           — account status set to SUSPENDED
+  account.closed              — account status set to CLOSED
+  compliance.alert_created    — new ComplianceAlert raised
+  compliance.alert_resolved   — ComplianceAlert status set to CLEARED
+  compliance.sar_filed        — SAR submitted to FinCEN
+  webhook.exhausted           — WebhookDelivery attempt_number == MAX_ATTEMPTS with failure
+  settlement.submitted        — Settlement file sent to rail operator
+  settlement.confirmed        — Settlement confirmed by rail operator
+
+API surface (gateway/v2/; all routes require Bearer token authentication):
+  POST   /v2/payments                  — create payment; returns Payment (PENDING)
+  GET    /v2/payments/{id}             — get payment by UUID
+  GET    /v2/payments                  — list payments; supports cursor pagination
+  POST   /v2/payments/{id}/reverse     — initiate reversal; idempotent
+  GET    /v2/accounts/{id}/balance     — current and available balance
+  GET    /v2/accounts/{id}/statement   — paginated ledger entries for account
+  POST   /v2/webhooks                  — register webhook endpoint
+  DELETE /v2/webhooks/{id}            — deregister webhook endpoint
+  GET    /v2/webhooks/{id}/deliveries  — delivery history with attempt details
+
+Architectural invariants:
+  1. All monetary amounts are stored and transmitted as BIGINT minor units
+     (cents for USD, pence for GBP, etc.). Float arithmetic on money is
+     prohibited throughout the codebase.
+  2. Every payment must have a corresponding pair of balanced ledger entries
+     (one DEBIT, one CREDIT) before its status can advance past PENDING.
+     The ledger is the authoritative record; the Payment.status field is
+     derived from it.
+  3. Status transitions are append-only state machine steps. Status MAY
+     NOT be updated by direct SQL; all transitions go through
+     src/ledger/entries/transitions.py:apply_transition().
+  4. Idempotency is enforced at the gateway layer. Duplicate submissions
+     with the same idempotency_key return the original response verbatim;
+     they do not create new records.
+  5. OFAC and AML screening are synchronous for payments below $10,000.
+     Payments at or above $10,000 are held in PENDING until compliance
+     clears or flags them. This threshold is defined in
+     src/compliance/config.py:SYNC_SCREENING_THRESHOLD_CENTS.
+  6. gateway/v1/ is read-only. No writes, no new routes, no schema changes.
+     It proxies reads to v2 handlers.
+  7. CDK stacks are the authoritative infrastructure definition.
+     Manual changes to AWS resources are prohibited outside of break-glass
+     procedures documented in infra/RUNBOOK.md.
+  8. All database schema changes require an Alembic migration file.
+     Schema MUST NOT be modified by application code at runtime.
+  9. Webhook signatures use HMAC-SHA256 over the raw request body with the
+     endpoint's stored secret. The signature is sent in the
+     X-Payment-Signature header as hex. Verification logic lives in
+     src/notifications/signing.py:verify_signature() and must not be
+     bypassed or reimplemented inline.
+  10. EventLog entries are immutable once written. No UPDATE or DELETE on
+      eventlog is permitted. Corrections are modelled as new events.
+  11. All database queries involving Payment.status or LedgerEntry must go
+      through SQLAlchemy ORM models defined in src/shared/models.py. Raw
+      SQL fragments that reference these tables are prohibited except in
+      Alembic migration files.
+  12. Cursor-based pagination is the only supported pagination scheme for
+      list endpoints. Offset pagination is prohibited due to inconsistency
+      under concurrent writes. Cursor tokens are opaque base64-encoded
+      composites of (created_at, id); their internal format must not be
+      relied upon by callers.
+  13. Fee calculation is the sole responsibility of src/ledger/fees.py.
+      No other module computes fees. FeeRule evaluation is performed inside
+      a database transaction that also posts the corresponding LedgerEntries
+      so that fee posting is atomic with the triggering payment transition.
+  14. All async I/O (database, Redis, HTTP) uses Python asyncio with
+      SQLAlchemy async sessions (AsyncSession). Synchronous blocking calls
+      inside async request handlers are prohibited.
+  15. PII redaction is enforced by src/shared/logging.py:RedactingFormatter.
+      This formatter is the only logger configured for application code.
+      Logger instances obtained via logging.getLogger() are acceptable only
+      if the root handler is the RedactingFormatter; direct print() to stdout
+      is prohibited in production code.
+
+External dependencies (pinned in pyproject.toml):
+  boto3             — AWS SDK (SQS, SNS, Secrets Manager, S3)
+  sqlalchemy        — ORM and query builder (async mode)
+  alembic           — schema migrations
+  pydantic v2       — request/response validation
+  httpx             — async HTTP client (used for rail adapters and webhooks)
+  cryptography      — payload signing and key management
+  pytest / pytest-asyncio — test framework
+  tenacity          — retry logic for external calls (rail adapters, SNS publish)
+  structlog         — structured JSON logging; wraps stdlib logging
+  redis-py          — Redis client (async); used for idempotency keys and rate limiting
+
+Configuration and secrets:
+  All runtime configuration is loaded from AWS Secrets Manager via
+  src/shared/config.py:get_config(). The config module caches values for
+  the lifetime of the Lambda execution environment. Direct use of
+  os.environ for sensitive values (credentials, signing keys, connection
+  strings) is prohibited; use get_config() exclusively.
+
+  Key configuration keys (as retrieved from Secrets Manager):
+    DATABASE_URL          — async PostgreSQL connection string
+    REDIS_URL             — ElastiCache connection string
+    SNS_TOPIC_ARN         — payment events SNS topic; used by notifications/
+    OFAC_API_KEY          — credential for OFAC screening provider
+    WEBHOOK_SIGNING_KEY   — master key; per-endpoint secrets derived from it
+    SYNC_SCREENING_THRESHOLD_CENTS — compliance screening mode boundary (default: 1_000_000)
+    MAX_WEBHOOK_ATTEMPTS  — max delivery retries before webhook.exhausted (default: 5)
+
+Observability:
+  - All Lambda functions emit structured logs via structlog. Log level is
+    controlled by the LOG_LEVEL environment variable (default: INFO).
+  - Distributed traces use AWS X-Ray. Trace IDs are propagated in the
+    X-Amzn-Trace-Id header and attached to all outbound HTTP requests via
+    the httpx X-Ray middleware in src/shared/http.py.
+  - Custom CloudWatch metrics are published by src/shared/metrics.py using
+    the EMF (Embedded Metrics Format). Key metrics: payment.created,
+    payment.settled, payment.failed, webhook.delivered, webhook.exhausted.
+  - Alarms are defined in infra/cdk/alarms.py. Do not modify alarm
+    thresholds without updating the corresponding CDK stack.
+
+Compliance context:
+  - Subject to FinCEN BSA/AML program requirements (31 CFR Part 1020).
+  - OFAC SDN list screening required on all payment parties before submission.
+  - Suspicious Activity Reports (SARs) are filed via src/compliance/aml/sar.py.
+  - PII fields (originator/beneficiary names, account numbers) must not appear
+    in application logs. Log redaction is enforced by
+    src/shared/logging.py:RedactingFormatter.
+###END:IMMUTABLE_CONTEXT###
+
+###ICS:CAPABILITY_DECLARATION###
+# Permitted actions
+ALLOW   read access WITHIN src/
+ALLOW   read access WITHIN tests/
+ALLOW   file modification WITHIN src/ledger/
+ALLOW   file modification WITHIN src/notifications/
+ALLOW   file modification WITHIN src/shared/
+ALLOW   file creation WITHIN src/ledger/ IF corresponding unit test added in tests/unit/
+ALLOW   file creation WITHIN src/shared/ IF corresponding unit test added in tests/unit/
+ALLOW   new Alembic migration file creation WITHIN infra/migrations/
+ALLOW   addition of new fields to existing Pydantic models WITHIN src/shared/
+
+# Prohibited actions
+DENY    modification of src/gateway/
+DENY    modification of src/rails/
+DENY    modification of src/compliance/
+DENY    modification of src/settlement/
+DENY    modification of infra/
+DENY    modification of any file WITHIN tests/
+DENY    deletion of any migration file WITHIN infra/migrations/
+DENY    introduction of float arithmetic ON monetary values
+DENY    direct SQL UPDATE of Payment.status UNLESS routed through apply_transition()
+DENY    introduction of new external dependencies UNLESS approved in pyproject.toml
+DENY    logging of PII fields
+
+# Mandatory requirements
+REQUIRE type annotations ON all new functions and methods
+REQUIRE docstring ON all new public functions and classes
+REQUIRE backward compatibility WITH gateway/v2/ API contracts
+REQUIRE idempotency handling ON all new payment-creating code paths
+REQUIRE unit test coverage ON all new ledger entry logic
+###END:CAPABILITY_DECLARATION###
+
+###ICS:SESSION_STATE###
+[2025-01-08T11:00Z] Task: add webhook retry-exhaustion notifications to src/notifications/
+[2025-01-08T11:05Z] Confirmed: src/notifications/webhooks.py:deliver() already tracks attempt count in Redis
+[2025-01-08T11:12Z] Decision: exhaustion threshold is 5 attempts (matches existing MAX_ATTEMPTS constant)
+[2025-01-08T11:18Z] Confirmed: SNS topic ARN for payment events is loaded from config via get_sns_topic_arn()
+[2025-01-08T11:24Z] Decision: exhaustion event payload must include payment_id, webhook_url, attempt_count, last_error
+[2025-01-08T11:30Z] Confirmed: no schema migration required; new notification type is a runtime enum value
+###END:SESSION_STATE###
+
+###ICS:TASK_PAYLOAD###
+Add a retry-exhaustion event to src/notifications/webhooks.py.
+
+When deliver() has exhausted all retry attempts (attempt_count == MAX_ATTEMPTS)
+and the final attempt has failed, publish a WEBHOOK_EXHAUSTED event to the
+payments SNS topic using the existing get_sns_topic_arn() helper.
+
+The event payload must conform to the schema established in SESSION_STATE.
+The existing delivery logic, retry schedule, and Redis tracking must not change.
+###END:TASK_PAYLOAD###
+
+###ICS:OUTPUT_CONTRACT###
+format:     unified diff
+schema:     standard unified diff against current HEAD; one hunk per modified function;
+            no changes outside src/notifications/webhooks.py unless a new helper module
+            in src/shared/ is strictly required
+variance:   diff header timestamps MAY be omitted; no other variance permitted
+on_failure: return plain text with prefix "BLOCKED:" and a single sentence naming
+            the CAPABILITY_DECLARATION constraint that prevents execution
+###END:OUTPUT_CONTRACT###

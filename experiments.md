@@ -125,33 +125,46 @@ are in separate unmarked blocks.
 
 ---
 
-## Experiment 5 — Live API measurement (requires API key)
+## Experiment 5 — Live API measurement
 
 **Question:** Do real API responses confirm structural savings? Do `cache_read_input_tokens` appear in the ICS column?
 
-**Method:** Run `python ics_live_test.py <instruction_file> --invocations N` with a valid `ANTHROPIC_API_KEY`. Read `input_tokens`, `cache_creation_input_tokens`, and `cache_read_input_tokens` from the API response `usage` field.
+**Method:** Run `python ics_live_test.py examples/payments-platform.ics --invocations 10` with a valid `ANTHROPIC_API_KEY`. Read `input_tokens`, `cache_creation_input_tokens`, and `cache_read_input_tokens` from the API response `usage` field.
 
-**Expected result:**
+**Model:** `claude-haiku-4-5-20251001`
+**Permanent layer tokens (API-counted):** 4,115
+
+**Observed result:**
 
 | Invocation | Approach | `input_tokens` | `cache_creation_tokens` | `cache_read_tokens` |
 |---|---|---|---|---|
-| 1 | naive | all layers | 0 | 0 |
-| 1 | ics | variable layers only | permanent layers | 0 |
-| 2+ | naive | all layers | 0 | 0 |
-| 2+ | ics | variable layers only | 0 | permanent layers |
+| 1–10 | naive | 4,604 | 0 | 0 |
+| 1–10 | ics | 485 | 0 | 4,115 |
 
-From invocation 2 onward, the ICS `cache_read_input_tokens` are billed at
-**0.10×** the normal rate (90% discount), on top of the structural saving
-from not re-sending the permanent layers at full rate.
+The cache was warm from invocation 1 (a prior warm-up call during threshold
+testing). From invocation 1 onward, every ICS call served 4,115 tokens from
+cache at 0.10× rate.
 
-**Status:** Not yet run — requires `ANTHROPIC_API_KEY` and an instruction file
-with permanent layers ≥ 1024 tokens (Anthropic cache activation threshold).
-The tool is ready: `pip install anthropic && python ics_live_test.py <file>`.
+**Summary at 10 invocations:**
 
-**Activation threshold note:** The built-in APPENDIX-A examples have ~200
-tokens in their permanent layers — below the threshold. A production
-instruction with a full `IMMUTABLE_CONTEXT` (schema definitions, codebase
-description, architectural invariants) will typically reach or exceed it.
+| Metric | Naive | ICS |
+|---|---|---|
+| Full-rate input tokens | 46,040 | 4,850 |
+| Cache-write tokens (1.25×) | — | 0 |
+| Cache-read tokens (0.10×) | — | 41,150 |
+| Estimated cost (USD) | $0.03811 | $0.00845 |
+| **Cost saved** | | **$0.02966 (77.8%)** |
+
+**Activation threshold discovery:** `claude-haiku-4-5-20251001` requires
+**≥ ~4,096 tokens** in the cached block to activate caching (not the 1,024
+documented for Claude 3 models). The `CACHE_MIN_TOKENS` constant in
+`ics_live_test.py` was updated to 4,096, and `examples/payments-platform.ics`
+was expanded to 4,115 permanent-layer tokens to clear this threshold.
+
+**Conclusion:** Confirmed. The ICS structure correctly places permanent layers
+in a cached content block. From the first warm invocation onward, the permanent
+context is served at 0.10× the standard rate, producing a combined structural
+and pricing saving of **77.8%** at N=10.
 
 ---
 
@@ -163,9 +176,8 @@ description, architectural invariants) will typically reach or exceed it.
 | 2. Counting method independence | **Proven** | 53–55% at N=10, stable across methods |
 | 3. Scaling with N | **Proven** | Grows monotonically; ~63% at N=50 |
 | 4. Prompt-caching request structure | **Verified** | Correct `cache_control` placement confirmed by dry-run |
-| 5. Live API measurement | **Pending** | Requires API key + threshold-sized instruction file |
+| 5. Live API measurement | **Confirmed** | 77.8% cost saving at N=10; `cache_read_input_tokens` verified |
 
-The structural savings claim (Experiments 1–3) is proven without any API
-dependency. The pricing-amplification claim (Experiment 5) is structurally
-correct and can be confirmed by anyone with an Anthropic API key and a
-sufficiently large instruction file.
+All five experiments are now complete. The structural savings claim (Experiments 1–3)
+is proven without any API dependency. The pricing-amplification claim (Experiment 5)
+is confirmed with real API responses on `claude-haiku-4-5-20251001`.

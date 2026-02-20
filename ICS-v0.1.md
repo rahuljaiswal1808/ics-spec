@@ -115,12 +115,36 @@ Each directive MUST be followed by a scope and MAY include a condition.
 **Syntax**
 
 ```text
-ALLOW   <scope> [IF <condition>]
-DENY    <scope> [IF <condition>]
-REQUIRE <scope> [IF <condition>]
+ALLOW   <action> [<qualifier>] [IF <condition>]
+DENY    <action> [<qualifier>] [IF <condition>]
+REQUIRE <action> [<qualifier>] [IF <condition>]
 ```
 
-The grammar of `<scope>` and `<condition>` is intentionally left free-form and implementation-defined. This is a known limitation: two implementations MAY use incompatible scope syntax and both claim ICS compliance. Callers requiring interoperability SHOULD define and document a shared scope grammar as a local convention. This may be addressed in a future version of this specification.
+**Scope grammar (normative)**
+
+```
+directive  ::= KEYWORD WS+ action (WS+ qualifier)? (WS+ "IF" WS+ condition)?
+KEYWORD    ::= "ALLOW" | "DENY" | "REQUIRE"
+action     ::= WORD (WS+ WORD)*
+qualifier  ::= QWORD WS+ target
+QWORD      ::= "WITHIN" | "ON" | "WITH" | "UNLESS"
+target     ::= WORD (WS+ WORD)*
+condition  ::= WORD (WS+ WORD)*
+WORD       ::= [A-Za-z0-9_./-]+
+WS         ::= " " | "\t"
+```
+
+Rules:
+- `action` MUST be non-empty.
+- If a qualifier keyword (`WITHIN`, `ON`, `WITH`, `UNLESS`) appears, it MUST be
+  followed by a non-empty `target`. A bare qualifier keyword with no target is
+  malformed.
+- If `IF` appears, it MUST be followed by a non-empty `condition`. A bare `IF`
+  with no condition is malformed.
+- Qualifier keywords appearing inside `action` text (i.e., not at a word
+  boundary following the action) MUST be treated as part of the action, not as
+  a qualifier introducer. Implementations SHOULD use the first occurrence of a
+  qualifier keyword as the qualifier boundary.
 
 **Examples**
 
