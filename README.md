@@ -113,7 +113,7 @@ python ics_live_test.py --dry-run
 
 The tester sends two requests per invocation — one **naive** (all layers flat, no caching) and one **ICS** (permanent layers marked `cache_control=ephemeral`) — and reads real token counts from the API response's `usage` field, including `cache_creation_input_tokens` and `cache_read_input_tokens`.
 
-> **Note on cache activation:** Anthropic prompt caching requires the cached block to be ≥ 1024 tokens for most models. The built-in APPENDIX-A examples are small demonstration snippets and will not trigger cache hits. Supply a production-sized instruction file to observe real `cache_read_input_tokens` savings in the ICS column.
+> **Note on cache activation:** Anthropic prompt caching requires the cached block to reach a minimum token threshold. For `claude-haiku-4-5-20251001` (and Claude 4-series models generally) the threshold is **≥ ~4,096 tokens**; older Claude 3 models used 1,024. The built-in APPENDIX-A examples are small demonstration snippets and will not trigger cache hits regardless of model. Use `examples/payments-platform.ics` (4,115 permanent-layer tokens, verified against the API) to observe real `cache_read_input_tokens` savings in the ICS column.
 
 ---
 
