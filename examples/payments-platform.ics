@@ -272,7 +272,10 @@ ALLOW   file creation WITHIN src/shared/ IF corresponding unit test added in tes
 ALLOW   new Alembic migration file creation WITHIN infra/migrations/
 ALLOW   addition of new fields to existing Pydantic models WITHIN src/shared/
 
-# Prohibited actions
+# PROHIBITED — evaluate each rule below against the task BEFORE generating any output.
+# If the task requires ANY action listed here, DO NOT produce a diff.
+# Instead respond immediately with: BLOCKED: <verbatim rule text>
+# (See OUTPUT_CONTRACT on_failure for the required response format.)
 DENY    modification of src/gateway/
 DENY    modification of src/rails/
 DENY    modification of src/compliance/
@@ -282,7 +285,7 @@ DENY    modification of any file WITHIN tests/
 DENY    deletion of any migration file WITHIN infra/migrations/
 DENY    introduction of float arithmetic ON monetary values
 DENY    direct SQL UPDATE of Payment.status UNLESS routed through apply_transition()
-DENY    introduction of new external dependencies UNLESS approved in pyproject.toml
+DENY    introduction of external dependencies NOT already listed in pyproject.toml at session start
 DENY    logging of PII fields
 
 # Mandatory requirements
@@ -319,6 +322,8 @@ schema:     standard unified diff against current HEAD; one hunk per modified fu
             no changes outside src/notifications/webhooks.py unless a new helper module
             in src/shared/ is strictly required
 variance:   diff header timestamps MAY be omitted; no other variance permitted
-on_failure: return plain text with prefix "BLOCKED:" and a single sentence naming
-            the CAPABILITY_DECLARATION constraint that prevents execution
+on_failure: if the task violates any CAPABILITY_DECLARATION DENY rule, the ONLY
+            permitted response is one line of plain text in this exact format:
+              BLOCKED: <verbatim DENY rule text>
+            Do not produce a diff. Do not explain. Do not attempt a workaround.
 ###END:OUTPUT_CONTRACT###

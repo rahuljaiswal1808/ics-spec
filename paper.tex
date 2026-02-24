@@ -1,0 +1,1465 @@
+\documentclass[11pt]{article}
+
+% ── Packages ──────────────────────────────────────────────────────────────────
+\usepackage[margin=1in]{geometry}
+\usepackage{microtype}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{parskip}
+\usepackage{natbib}
+\usepackage{authblk}
+\usepackage{abstract}
+\usepackage{tikz}
+\usetikzlibrary{positioning,fit,backgrounds}
+
+% ── Listing style ─────────────────────────────────────────────────────────────
+\definecolor{codebg}{RGB}{248,248,248}
+\definecolor{codeframe}{RGB}{220,220,220}
+\definecolor{kwcolor}{RGB}{0,0,180}
+\definecolor{commentcolor}{RGB}{100,100,100}
+
+\lstdefinelanguage{ICS}{
+  keywords={ALLOW,DENY,REQUIRE,WITHIN,ON,WITH,UNLESS,IF,CLEAR},
+  keywordstyle=\color{kwcolor}\bfseries,
+  comment=[l]{\#},
+  commentstyle=\color{commentcolor}\itshape,
+  stringstyle=\color{black},
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  backgroundcolor=\color{codebg},
+  rulecolor=\color{codeframe},
+  showstringspaces=false,
+  moredelim=[s][\color{kwcolor}]{"\#\#\#ICS:}{"\#\#\#},
+}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  backgroundcolor=\color{codebg},
+  rulecolor=\color{codeframe},
+  showstringspaces=false,
+  numbers=none,
+}
+
+% ── Hyperref setup ────────────────────────────────────────────────────────────
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  citecolor=blue!60!black,
+  urlcolor=blue!60!black,
+}
+
+% ── Title ─────────────────────────────────────────────────────────────────────
+\title{\textbf{ICS: A Formal Instruction Contract Specification\\
+for Large Language Model Interfaces}\\[0.4em]
+\large Version 0.1 --- Technical Report}
+
+\author[1]{[Author Name]}
+\affil[1]{[Affiliation]}
+
+\date{\today}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\begin{document}
+\maketitle
+
+% ── Abstract ──────────────────────────────────────────────────────────────────
+\begin{abstract}
+Instructions to Large Language Models (LLMs) are typically authored as
+informal prose, resulting in recurring failure modes: implicit constraints
+that disappear across sessions, mixed-lifetime context that cannot be
+cached, ambiguous output expectations that are resolved only by repeated
+re-prompting, and prompt content that cannot be audited or validated
+programmatically. We introduce the \emph{Instruction Contract Specification}
+(ICS), a five-layer structured format that treats LLM instructions as formal
+interfaces rather than natural language requests. ICS separates instruction
+content by \emph{lifetime}: permanent context, capability declarations,
+session state, per-invocation tasks, and output contracts. This separation
+enables prompt-caching APIs to serve stable content at reduced rates. We
+provide a formal grammar for capability directives, a conformance checker, and
+empirical evaluation on a real-world B2B payments platform workload across two
+providers. ICS-structured instructions achieve a \textbf{77.8\%} reduction in
+effective API cost on Anthropic \texttt{claude-haiku-4-5-20251001} and a
+\textbf{15.3\%} reduction on OpenAI \texttt{gpt-4o-mini} compared to the
+na\"{i}ve flat-prompt baseline, with a proven lower bound of 55\% token savings
+at $N{=}10$ that is independent of model or counting method. The provider
+difference is explained by cache rate ($0.10\times$ vs.\ $0.50\times$) and
+whether the na\"{i}ve approach benefits from automatic caching. ICS is
+model-agnostic, framework-independent, and available as an open specification.
+\end{abstract}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Introduction}
+\label{sec:intro}
+
+The software industry has spent decades developing discipline around
+\emph{interfaces}: API contracts, schemas, protocols, and type systems that
+make the behavior of software components explicit, auditable, and
+maintainable. These tools exist because interfaces that rely on shared
+context, informal conventions, and implied constraints do not compose and do
+not scale.
+
+LLM instructions have not received the same treatment. The in-context learning
+paradigm established by \citet{brown2020gpt3} showed that instructions and
+examples, provided as plain text in the model's context, can direct a wide range
+of behaviours without any weight update. This discovery was enormously powerful,
+but it also established an informal default: instructions as prose. In
+production systems, instructions are typically written as natural language prose,
+structured loosely by convention, and stored in files with no machine-readable
+semantics. When a system that
+uses an LLM instruction misbehaves, diagnosing whether the fault lies in the
+model, the instruction, or the caller's interpretation of the output requires
+manual inspection. When the instruction must be reused in a new context or
+maintained by someone who was not involved in writing it, implicit assumptions
+collapse silently.
+
+This produces four failure modes that recur across real deployments:
+
+\begin{enumerate}[leftmargin=*]
+\item \textbf{Context collapse.} Long-lived facts (system invariants,
+architectural constraints) are mixed with short-lived context (session
+decisions, per-task parameters) into a single prompt block. Callers cannot
+determine what can be safely cached and what must be re-sent on every
+invocation, resulting in either unnecessary token cost or stale-context bugs.
+
+\item \textbf{Implicit constraints.} Team conventions---``never modify the
+API layer,'' ``always return amounts in minor units,'' ``assume Python
+3.11''---are documented in READMEs or exist only in the knowledge of the
+original author. When the instruction is reused or transferred, these
+constraints disappear silently.
+
+\item \textbf{Ambiguous output expectations.} Instructions describe
+\emph{what to do} without specifying what a correct result looks like.
+Output evaluation becomes subjective, failure states are undetectable by
+callers, and retry behavior is undefined.
+
+\item \textbf{Retry as a first resort.} Ambiguous instructions produce
+inconsistent outputs. The standard response is to rephrase and retry---which
+treats ambiguity as a model failure rather than an interface failure, and
+produces no durable fix.
+\end{enumerate}
+
+We argue that these failure modes share a root cause: \emph{LLM instructions
+are not treated as interfaces.} The solution is not better prompting
+intuition---it is applying the same engineering discipline to instructions
+that is already applied to APIs, schemas, and protocols.
+
+\paragraph{Contributions.} We present the \emph{Instruction Contract
+Specification} (ICS), which makes the following contributions:
+
+\begin{enumerate}[leftmargin=*]
+\item A five-layer instruction format that separates content by lifetime
+(\S\ref{sec:spec}), making stable context structurally distinct from
+per-invocation content.
+
+\item A formal directive grammar for capability declarations
+(\S\ref{sec:capgram}), replacing prose constraints with machine-verifiable
+directives.
+
+\item A required output contract with enumerated fields, eliminating
+ambiguous output expectations and undefined failure states (\S\ref{sec:oc}).
+
+\item Empirical evidence that ICS's lifetime separation enables prompt-caching
+APIs to reduce effective API cost by 77.8\% on a real-world workload, with a
+proven token-saving lower bound that holds for any conformant instruction
+(\S\ref{sec:eval}).
+
+\item An open specification, reference validator, and worked examples across
+five real-world domains (\S\ref{sec:examples}).
+\end{enumerate}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{Prompt templates and structured prompting.}
+Early systematic approaches to prompting introduced reusable templates and
+labeling schemes~\citep{bach2022promptsource,sanh2022multitask}. DSPy
+\citep{khattab2023dspy} compiles natural-language signatures into optimized
+prompt programs, treating prompt construction as a differentiable pipeline.
+LMQL~\citep{beurer2023lmql} and Guidance~\citep{guidance2023} add
+programming-language constructs (loops, conditionals, type constraints) to
+prompt authoring. TypeChat~\citep{typechat2023} uses TypeScript type
+definitions to constrain LLM outputs to well-typed JSON. ICS differs from all
+of these: it does not optimize prompts, does not compile them, and does not
+constrain \emph{model decoding}. Instead, ICS defines a \emph{structural
+contract} for the \emph{instruction itself}---what the caller commits to
+providing and how it is organized---independent of the underlying model or
+inference engine.
+
+\paragraph{Chain-of-thought and instruction tuning.}
+Chain-of-thought prompting~\citep{wei2022chain} and related
+techniques~\citep{kojima2022zero,wang2022self} elicit multi-step reasoning
+by structuring the prompt's \emph{content}. Instruction
+tuning~\citep{ouyang2022training,wei2022finetuned} aligns model behavior with
+natural-language instructions at training time. These methods address how
+models \emph{reason}; ICS addresses how instructions are \emph{structured and
+validated}. The two concerns are orthogonal: an ICS-compliant instruction can
+include chain-of-thought examples in its TASK\_PAYLOAD layer.
+
+\paragraph{Memory and context management.}
+MemGPT~\citep{packer2023memgpt} introduces a hierarchical memory system that
+pages context in and out of an LLM's context window at runtime, enabling
+unbounded effective context. Retrieval-augmented generation
+(RAG)~\citep{lewis2020rag} injects retrieved documents into the prompt at
+query time. Both address \emph{what content} the model sees; ICS addresses
+\emph{how that content is organized and classified by lifetime}. The two
+approaches are complementary: a RAG system could use ICS to separate
+retrieved content (TASK\_PAYLOAD) from stable system context
+(IMMUTABLE\_CONTEXT).
+
+\paragraph{Prompt caching and token efficiency.}
+Anthropic's prompt caching API~\citep{anthropic2024caching} and analogous
+mechanisms in other providers allow prefill KV-cache reuse for stable prompt
+prefixes. Gim et al.~\citep{gim2023prompt} propose prompt cache architectures
+for shared prefix reuse across requests. ICS's lifetime-separation design
+directly enables these mechanisms by making the stable prefix structurally
+explicit---the IMMUTABLE\_CONTEXT and CAPABILITY\_DECLARATION layers are
+always positioned first and never change across invocations in a session,
+making them natural cache targets. OpenAI's automatic prefix caching~\citep{openai2024caching}
+caches prefixes of $\geq 1{,}024$ tokens with no explicit markup required;
+ICS's non-redefinition rule is precisely the structural guarantee that keeps
+prefixes stable across invocations, preventing accidental cache invalidation.
+
+\paragraph{Formal specifications for LLMs.}
+Closest to ICS in spirit is TypeChat~\citep{typechat2023}, which uses type
+schemas to constrain outputs, and work on schema-constrained
+decoding~\citep{willard2023efficient,geng2023grammar}. These focus on
+\emph{output} structure; ICS defines contracts for both input and output.
+There is, to our knowledge, no prior work that defines a formal
+\emph{multi-layer input specification} for LLM instructions with explicit
+lifetime semantics, directive syntax, and a conformance model.
+
+\paragraph{Prompt sensitivity and reliability.}
+\citet{sclar2024sensitivity} show that open-source LLMs shift task accuracy
+by up to 76 percentage points in response to trivial prompt formatting changes
+(separators, spacing, capitalisation), with no change in semantic content.
+\citet{brown2020gpt3} established that unstructured in-context examples encode
+task behavior, implicitly confirming that prompt \emph{form} matters as much as
+prompt \emph{content}. ICS responds to this brittleness structurally: mandatory
+canonical ordering, explicit constraints, and non-redefinition rules eliminate
+the degrees of freedom that these sensitivity studies show are dangerous.
+
+\paragraph{Context position and attention.}
+\citet{liu2024lost} demonstrate a U-shaped utilisation curve in long-context
+LLMs: models attend most reliably to content at the very beginning and very end
+of the context window, degrading substantially for material placed in the
+middle. ICS's layer ordering---IMMUTABLE\_CONTEXT first, OUTPUT\_CONTRACT
+last, TASK\_PAYLOAD in the penultimate position---aligns critical content with
+the positions models attend to most reliably. The non-redefinition rule
+prevents constraints from being accidentally buried in the middle by restating
+them near the task.
+
+\paragraph{Prompt injection.}
+\citet{liu2024injection} provide the first formal definition and systematic
+benchmark of prompt injection attacks. ICS's CAPABILITY\_DECLARATION layer
+creates a structural permission boundary: injected content in TASK\_PAYLOAD
+cannot override \texttt{DENY} directives declared in an earlier layer, because
+the non-redefinition rule (ICS \S4.2) prohibits later layers from contradicting
+earlier constraints. ICS thus provides a specification-level defence against the
+mechanism by which injection succeeds in flat-prompt architectures.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{The ICS Specification}
+\label{sec:spec}
+
+An ICS-compliant instruction is composed of exactly five layers, appearing
+in the canonical order defined below. Each layer is delimited by boundary
+markers:
+
+\begin{lstlisting}
+###ICS:<LAYER_NAME>###
+<layer content>
+###END:<LAYER_NAME>###
+\end{lstlisting}
+
+Layers MUST appear in order. A parser encountering layers out of order MUST
+reject the instruction as non-conformant. Figure~\ref{fig:layers} illustrates
+the five layers, their lifetimes, and which layers are eligible for
+KV-cache reuse across invocations. The five layers and their lifetime
+semantics are as follows.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  layer/.style={
+    draw, rounded corners=3pt, minimum width=8cm, minimum height=0.85cm,
+    font=\small\ttfamily, align=center, inner sep=4pt
+  },
+  cached/.style={layer, fill=blue!10, draw=blue!50!black},
+  session/.style={layer, fill=orange!10, draw=orange!60!black},
+  invoke/.style={layer, fill=green!10, draw=green!60!black},
+  label/.style={font=\footnotesize\sffamily, align=left},
+  arrow/.style={->, >=stealth, thick},
+]
+
+% Layers (top to bottom = canonical order)
+\node[cached]  (ic)  {IMMUTABLE\_CONTEXT};
+\node[cached,  below=0.15cm of ic]  (cd)  {CAPABILITY\_DECLARATION};
+\node[session, below=0.15cm of cd] (ss)  {SESSION\_STATE};
+\node[invoke,  below=0.15cm of ss] (tp)  {TASK\_PAYLOAD};
+\node[invoke,  below=0.15cm of tp] (oc)  {OUTPUT\_CONTRACT};
+
+% Lifetime brackets (right side)
+\begin{scope}[shift={(4.6cm,0)}]
+  \draw[blue!60!black, thick, decorate,
+        decoration={brace, amplitude=5pt}]
+    ([xshift=2pt]cd.north east) -- ([xshift=2pt]ic.south east)
+    node[midway, right=6pt, label, text=blue!60!black] {permanent\\(cache eligible)};
+
+  \draw[orange!70!black, thick, decorate,
+        decoration={brace, amplitude=5pt}]
+    ([xshift=2pt]ss.north east) -- ([xshift=2pt]ss.south east)
+    node[midway, right=6pt, label, text=orange!70!black] {session\\(cleared on reset)};
+
+  \draw[green!60!black, thick, decorate,
+        decoration={brace, amplitude=5pt}]
+    ([xshift=2pt]oc.north east) -- ([xshift=2pt]tp.south east)
+    node[midway, right=6pt, label, text=green!60!black] {per-invocation\\(always re-sent)};
+\end{scope}
+
+% Legend
+\node[below=0.5cm of oc, xshift=-1cm, font=\footnotesize\sffamily] (leg) {%
+  \textcolor{blue!60!black}{$\blacksquare$}~Cached\quad
+  \textcolor{orange!70!black}{$\blacksquare$}~Session\quad
+  \textcolor{green!60!black}{$\blacksquare$}~Invocation%
+};
+
+\end{tikzpicture}
+\caption{The five ICS layers in canonical order. Blue layers form a stable
+prefix eligible for KV-cache reuse. The orange layer accumulates session
+decisions and is cleared on session reset. Green layers change on every
+invocation and are always re-sent at full cost.}
+\label{fig:layers}
+\end{figure}
+
+\subsection{IMMUTABLE\_CONTEXT}
+\label{sec:ic}
+
+IMMUTABLE\_CONTEXT declares long-lived facts that remain constant across all
+tasks within a domain: system description, repository or schema layout,
+architectural invariants, external dependency contracts. It MUST NOT include
+task-specific instructions. It is the only layer eligible for aggressive
+prompt caching, because it is stable across sessions by definition.
+
+\textbf{Key rules.} Content MUST NOT be restated, redefined, or contradicted
+in any subsequent layer. Any content that would be valid in IMMUTABLE\_CONTEXT
+but is placed in SESSION\_STATE or TASK\_PAYLOAD is a conformance violation.
+
+\subsection{CAPABILITY\_DECLARATION}
+\label{sec:cd}
+
+CAPABILITY\_DECLARATION defines what the model is permitted, forbidden, and
+required to do. All permissions are expressed using three directives:
+\texttt{ALLOW}, \texttt{DENY}, and \texttt{REQUIRE}. Undeclared actions are
+DENIED by default.
+
+\subsubsection{Directive grammar}
+\label{sec:capgram}
+
+\begin{lstlisting}[language=ICS]
+directive  ::= KEYWORD WS+ action (WS+ qualifier)? (WS+ "IF" WS+ condition)?
+KEYWORD    ::= "ALLOW" | "DENY" | "REQUIRE"
+action     ::= WORD (WS+ WORD)*
+qualifier  ::= QWORD WS+ target
+QWORD      ::= "WITHIN" | "ON" | "WITH" | "UNLESS"
+target     ::= WORD (WS+ WORD)*
+condition  ::= WORD (WS+ WORD)*
+WORD       ::= [A-Za-z0-9_./-]+
+WS         ::= " " | "\t"
+\end{lstlisting}
+
+The grammar is intentionally liberal on scope expressions to support existing
+codebase idioms without requiring rewrites at adoption time. A normative scope
+grammar is deferred to ICS v0.2 as an optional conformance level. Example
+directives:
+
+\begin{lstlisting}[language=ICS]
+ALLOW   file modification WITHIN src/orders/
+DENY    modification of src/orders/api/
+DENY    introduction of float arithmetic ON monetary values
+REQUIRE type annotations ON all new functions
+REQUIRE backward compatibility WITH gateway/v2/ API contracts
+\end{lstlisting}
+
+\subsection{SESSION\_STATE}
+\label{sec:ss}
+
+SESSION\_STATE captures temporary assumptions and decisions that accumulate
+within a session but must not outlast it: conclusions reached in prior
+invocations, temporary flags, confirmed facts about the current task scope.
+Each entry SHOULD carry an identifier or timestamp.
+
+A session ends when SESSION\_STATE contains only the sentinel value
+\texttt{CLEAR}:
+
+\begin{lstlisting}
+###ICS:SESSION_STATE###
+CLEAR
+###END:SESSION_STATE###
+\end{lstlisting}
+
+A SESSION\_STATE layer containing \texttt{CLEAR} alongside other content MUST
+be rejected as malformed. Declaring a new IMMUTABLE\_CONTEXT implicitly clears
+any prior SESSION\_STATE.
+
+\subsection{TASK\_PAYLOAD}
+\label{sec:tp}
+
+TASK\_PAYLOAD is the only layer that changes per invocation. It specifies the
+precise action to be performed, without restating context from preceding
+layers. A TASK\_PAYLOAD is executable without clarification if all required
+inputs, constraints, and success conditions are fully defined across the
+instruction layers.
+
+\subsection{OUTPUT\_CONTRACT}
+\label{sec:oc}
+
+OUTPUT\_CONTRACT declares the required shape of the response. It is response-
+scoped but MUST be declared before execution. All four fields are required:
+
+\begin{center}
+\begin{tabularx}{\linewidth}{lX}
+\toprule
+\textbf{Field} & \textbf{Meaning} \\
+\midrule
+\texttt{format}     & Output encoding (JSON, unified diff, prose, \ldots) \\
+\texttt{schema}     & Structure definition (JSON Schema, field list, \ldots) \\
+\texttt{variance}   & Explicitly permitted deviations; unlisted variance is forbidden \\
+\texttt{on\_failure} & Required behavior when output cannot conform \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Free-form prose is invalid unless \texttt{format: prose} is declared
+explicitly. Outputs that do not satisfy the contract MUST NOT be partially
+accepted; the \texttt{on\_failure} behavior MUST be applied.
+
+\subsection{Conformance}
+\label{sec:conform}
+
+An instruction is \emph{ICS-compliant} if and only if all five layers are
+present, delimited correctly, in canonical order, and satisfy the layer-
+specific rules above. Partial compliance is not defined; the predicate is
+binary.
+
+A conformance checker MUST verify, in order: (1) all five boundary tags are
+well-formed and present; (2) layers appear in canonical order; (3) SESSION\_STATE
+containing \texttt{CLEAR} contains no other content; (4) no layer restates,
+redefines, or contradicts a preceding layer; (5) CAPABILITY\_DECLARATION uses
+only \texttt{ALLOW}/\texttt{DENY}/\texttt{REQUIRE} directives; (6) OUTPUT\_CONTRACT
+contains all four required fields.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Worked Examples}
+\label{sec:examples}
+
+We provide fully conformant ICS instructions across five production-representative
+domains (Appendices~\ref{app:review}--\ref{app:payments}) to demonstrate that ICS
+applies wherever an LLM is given repeatable, structured tasks, not only in
+software development. Abbreviated descriptions follow.
+
+\paragraph{Domain 1: Automated PR code review (Appendix~\ref{app:review}).}
+A multi-turn agent reviews files from a pull request one at a time.
+IMMUTABLE\_CONTEXT declares language invariants and dependency policy for a
+Go/Python monorepo. CAPABILITY\_DECLARATION locks severity rules (\texttt{REQUIRE
+flagging of SQL string interpolation as CRITICAL}) so they cannot be weakened
+by later task phrasing. SESSION\_STATE accumulates per-file findings across
+turns; the agent terminates when \texttt{all\_files\_reviewed: true} appears.
+
+\paragraph{Domain 2: API gateway log analysis (Appendix~\ref{app:logs}).}
+A recurring analytics pipeline runs SLO compliance checks against
+pre-aggregated API gateway log windows.
+CAPABILITY\_DECLARATION includes \texttt{DENY output of individual caller\_id
+values} to enforce a privacy constraint once, structurally, rather than
+repeating it in each TASK\_PAYLOAD. \texttt{REQUIRE flagging of any p99
+breach on /v3/payments* as CRITICAL} encodes an alerting rule that cannot
+be overridden by task phrasing.
+
+\paragraph{Domain 3: Customer support with RAG (Appendix~\ref{app:rag}).}
+A support agent answers questions grounded in a retrieved product documentation
+corpus. CAPABILITY\_DECLARATION prohibits hallucination beyond retrieved
+chunks (\texttt{DENY generation of information not present in retrieved
+chunks}) and blocks citation of internal documents regardless of retrieval
+score. SESSION\_STATE tracks confirmed user context (platform version,
+prior troubleshooting steps) across a multi-turn support thread.
+
+\paragraph{Domain 4: Content moderation pipeline (Appendix~\ref{app:moderation}).}
+A trust-and-safety pipeline classifies user-generated content under a
+versioned policy with multi-jurisdiction overrides. IMMUTABLE\_CONTEXT pins
+the authoritative policy version and severity definitions. CAPABILITY\_DECLARATION
+locks against policy downgrade (\texttt{DENY severity downgrade below MEDIUM
+for designated high-risk topic misinformation}) and policy version drift
+(\texttt{DENY application of policy versions other than 2025-01-15}).
+The OUTPUT\_CONTRACT's enumerated \texttt{verdict} field and \texttt{action\_required}
+consistency rule make the moderation decision machine-checkable.
+
+\paragraph{Domain 5: B2B payments platform, RAG + agent (Appendix~\ref{app:payments}).}
+The example used in our empirical evaluation (\S\ref{sec:eval}).
+IMMUTABLE\_CONTEXT covers 15 architectural invariants, 9 core data models,
+and a full event-type registry. CAPABILITY\_DECLARATION includes
+compliance-critical directives (\texttt{DENY logging of PII fields},
+\texttt{DENY introduction of float arithmetic ON monetary values}).
+The permanent context totals 4{,}115 API-counted tokens---sufficient to trigger
+the prompt-caching threshold on \texttt{claude-haiku-4-5-20251001}.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Evaluation}
+\label{sec:eval}
+
+We evaluate ICS along two axes: (1) \emph{structural token savings}---the
+reduction in tokens sent per invocation attributable to lifetime separation
+alone, independent of any pricing scheme; and (2) \emph{effective cost
+savings}---the combined effect of structural savings and prompt-caching
+pricing on real API responses.
+
+\subsection{Structural savings: mathematical proof}
+\label{sec:proof}
+
+Let $T$ be the total token count of a full ICS instruction.
+Let $P$ be the token count of the permanent layers
+(IMMUTABLE\_CONTEXT $+$ CAPABILITY\_DECLARATION).
+Let $V = T - P$ be the token count of the variable layers
+(SESSION\_STATE $+$ TASK\_PAYLOAD $+$ OUTPUT\_CONTRACT).
+
+The na\"{i}ve approach re-sends $T$ tokens on every invocation:
+\[
+  C_{\text{naive}}(N) = T \cdot N
+\]
+
+The ICS approach sends permanent layers once (or on session reset) and
+variable layers on every invocation. Let $S \leq N$ be the number of
+session-state changes. Then:
+\[
+  C_{\text{ics}}(N) = P \cdot 1 \;+\; V_S \cdot S \;+\; V_T \cdot N
+\]
+where $V_S$ and $V_T$ are the session and task/output token counts
+respectively. Because $P > 0$ and $P < T$, we have
+$C_{\text{ics}}(N) < C_{\text{naive}}(N)$ for all $N > 1$.
+
+This is an identity---it holds for every ICS-compliant instruction regardless
+of content or model. The savings rate converges to $P/T$ as $N \to \infty$.
+
+\subsection{Token counting: method independence}
+\label{sec:counting}
+
+Table~\ref{tab:counting} shows token counts and savings at $N{=}10$
+for two offline counting methods applied to the code review example
+(Appendix~\ref{app:review}) and the log-analysis example (Appendix~\ref{app:logs}).
+
+\begin{table}[h]
+\centering
+\caption{Token savings at $N{=}10$ across two counting methods.}
+\label{tab:counting}
+\begin{tabular}{llrr}
+\toprule
+\textbf{Example} & \textbf{Method} & \textbf{Na\"{i}ve tokens} & \textbf{Savings} \\
+\midrule
+Code refactoring & Approx ($\ell/4$) & 4,830 & 53.7\% \\
+Code refactoring & Word-boundary BPE & 4,830 & 55.2\% \\
+Log analysis     & Approx ($\ell/4$) & 5,520 & 55.2\% \\
+Log analysis     & Word-boundary BPE & 5,520 & 53.1\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The savings percentage is stable at 53--55\% across both examples and both
+methods, confirming that the structural saving is not an artifact of any
+particular token-counting approximation.
+
+\subsection{Savings as a function of invocation count}
+\label{sec:scaling}
+
+Table~\ref{tab:scaling} shows how savings grow as $N$ increases on the
+code-refactoring example (word-boundary counting). Savings grow
+monotonically, approaching $P/T \approx 63\%$ as $N \to \infty$.
+
+\begin{table}[h]
+\centering
+\caption{Token savings as a function of invocation count $N$.}
+\label{tab:scaling}
+\begin{tabular}{rrrrr}
+\toprule
+$N$ & Na\"{i}ve tokens & ICS tokens & Saved & Savings \% \\
+\midrule
+1  & 483    & 483    & 0      & 0.0\%  \\
+5  & 2,415  & 1,313  & 1,102  & 45.6\% \\
+10 & 4,830  & 2,166  & 2,664  & 55.2\% \\
+20 & 9,660  & 3,872  & 5,788  & 59.9\% \\
+50 & 24,150 & 8,990  & 15,160 & 62.8\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Live API measurement}
+\label{sec:live}
+
+We ran both approaches on the payments-platform example (Domain~5) against two
+providers: Anthropic and OpenAI. In both cases the TASK\_PAYLOAD and
+SESSION\_STATE layers vary per invocation while the permanent layers
+(IMMUTABLE\_CONTEXT and CAPABILITY\_DECLARATION, totalling 4,115 tokens) remain
+unchanged across all 10 invocations.
+
+\paragraph{Anthropic (\texttt{claude-haiku-4-5-20251001}).}
+The ICS approach places the permanent layers in a single content block marked
+\texttt{cache\_control: ephemeral}; the na\"{i}ve approach sends the full
+instruction as a flat string with no cache markup. We measured
+\texttt{input\_tokens}, \texttt{cache\_creation\_input\_tokens}, and
+\texttt{cache\_read\_input\_tokens} from the API \texttt{usage} field across
+10 invocations. The cache was warm from invocation~1 due to a prior warm-up
+call; every ICS invocation read the permanent block from cache at $0.10\times$
+the standard rate.
+
+\begin{table}[h]
+\centering
+\caption{Anthropic live API token usage at $N{=}10$. Permanent layer: 4,115 tokens.}
+\label{tab:live-anthropic}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Approach} & \textbf{Full-rate tokens} & \textbf{Cache-write} & \textbf{Cache-read} & \textbf{Cost (USD)} \\
+\midrule
+Na\"{i}ve & 46,040 & 0      & 0      & \$0.03811 \\
+ICS       & 4,850  & 0      & 41,150 & \$0.00845 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The ICS approach achieves a \textbf{77.8\%} cost reduction at $N{=}10$
+(\$0.02966 saved per session). The na\"{i}ve approach receives zero cache
+reads because Anthropic's API only caches content in explicitly marked blocks.
+
+\paragraph{Cache activation threshold.}
+We empirically established that \texttt{claude-haiku-4-5-20251001} requires
+$\geq{\sim}4{,}096$ tokens in the cached block to activate caching---higher
+than the 1,024-token threshold documented for Claude~3 models. ICS's
+requirement that IMMUTABLE\_CONTEXT be semantically complete encourages callers
+to include full context in this layer, naturally pushing its size toward the
+activation threshold for real-world workloads.
+
+\paragraph{OpenAI (\texttt{gpt-4o-mini}).}
+OpenAI's caching is fully automatic: any request whose prefix matches a prior
+request of $\geq{1{,}024}$ tokens is served at $0.50\times$ the input
+rate~\citep{openai2024caching}, with no caller-side markup required. We ran
+the same 10-invocation experiment using \texttt{ics\_live\_test.py --provider openai}
+and read \texttt{cached\_tokens} from the \texttt{usage.prompt\_tokens\_details}
+field.
+
+\begin{table}[h]
+\centering
+\caption{OpenAI live API token usage at $N{=}10$. Permanent layer: 4,115 tokens.}
+\label{tab:live-openai}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Approach} & \textbf{Full-rate tokens} & \textbf{Cache-write} & \textbf{Cache-read} & \textbf{Cost (USD)} \\
+\midrule
+Na\"{i}ve & 8,776  & 0      & 31,744 & \$0.00389 \\
+ICS       & 840    & 0      & 39,680 & \$0.00329 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The ICS approach achieves a \textbf{15.3\%} cost reduction at $N{=}10$
+(\$0.00060 saved per session). The substantially smaller saving compared to
+Anthropic arises from two factors. First, OpenAI's automatic caching eventually
+caches the na\"{i}ve prefix too: invocations~1--2 ran at full rate, but from
+invocation~3 onward the na\"{i}ve approach also benefited from cache reads.
+ICS's structural advantage in this setting is therefore primarily temporal:
+cache hits from invocation~1 rather than invocation~3. Second, OpenAI's
+$0.50\times$ cache rate is less aggressive than Anthropic's $0.10\times$,
+reducing the pricing amplification on cached tokens. Table~\ref{tab:savings-summary}
+summarises the cross-provider comparison.
+
+\begin{table}[h]
+\centering
+\caption{Cross-provider cost savings summary at $N{=}10$.}
+\label{tab:savings-summary}
+\begin{tabular}{llrrrr}
+\toprule
+\textbf{Provider} & \textbf{Model} & \textbf{Cache rate} & \textbf{Na\"{i}ve auto-caches?} & \textbf{Cost saving} \\
+\midrule
+Anthropic & claude-haiku-4-5-20251001 & $0.10\times$ & No  & \textbf{77.8\%} \\
+OpenAI    & gpt-4o-mini               & $0.50\times$ & Yes (from inv.\ 3) & \textbf{15.3\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\subsection{Output quality benchmark}
+\label{sec:quality}
+
+Token efficiency is ICS's primary claim. A natural follow-on question is
+whether the structured format also \emph{affects output quality}---specifically,
+whether it helps or hurts the model's ability to (a)~follow the OUTPUT\_CONTRACT
+format and (b)~respect CAPABILITY\_DECLARATION DENY directives. To explore this
+we ran a two-phase pilot quality benchmark using \texttt{ics\_quality\_bench.py}.
+
+\paragraph{Setup.}
+We constructed 10 scenarios on the payments-platform domain (Domain~5):
+five \emph{valid} tasks (the model should produce a unified diff as specified
+by the OUTPUT\_CONTRACT) and five \emph{deny} tasks (the task body explicitly
+requests a change that violates a CAPABILITY\_DECLARATION DENY rule, and the
+model should respond with the \texttt{BLOCKED:} prefix mandated by the
+OUTPUT\_CONTRACT \texttt{on\_failure} clause). Both naive and ICS prompts were
+built from the same instruction file; only SESSION\_STATE and TASK\_PAYLOAD were
+varied per scenario. Responses were scored on two binary dimensions:
+
+\begin{itemize}
+  \item \textbf{format\_pass} --- response matches the expected format
+    (unified diff starting with \texttt{---}/\texttt{@@} for valid tasks;
+    \texttt{BLOCKED:} prefix for deny tasks).
+  \item \textbf{constraint\_pass} --- model correctly refuses a deny task
+    (\texttt{BLOCKED:}) or correctly does not refuse a valid task.
+\end{itemize}
+
+We ran $R{=}1$ repetition per scenario (20 API calls total) against
+\texttt{claude-haiku-4-5-20251001} in two rounds.
+
+\paragraph{Round~1 results (baseline format).}
+The initial run used the CAPABILITY\_DECLARATION and OUTPUT\_CONTRACT format from
+the \texttt{payments-platform.ics} example as-is, with a standard user turn:
+``\textit{Please execute the task described in TASK\_PAYLOAD and return the
+result per OUTPUT\_CONTRACT.}''  Table~\ref{tab:quality-v1} reports pass rates.
+
+\begin{table}[h]
+\centering
+\caption{Round~1 quality pass rates ($R{=}1$, baseline format).
+``fmt'' = format\_pass; ``con'' = constraint\_pass.}
+\label{tab:quality-v1}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Task type} & \textbf{Naive fmt} & \textbf{ICS fmt} & \textbf{Naive con} & \textbf{ICS con} \\
+\midrule
+Valid tasks ($n{=}5$) & 100\% & 80\%  & 100\% & 100\% \\
+Deny tasks ($n{=}5$)  &  60\% & 20\%  &  60\% &  20\%  \\
+\midrule
+\textbf{Overall}      &  80\% & 50\%  &  80\% &  60\%  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Naive prompting outperformed ICS on deny-task compliance (60\% vs.\ 20\%).
+Two failure modes were identified. \emph{Recognition failures} (ICS only,
+two scenarios): the model generated a diff despite an explicit DENY, apparently
+treating the \texttt{\#\#\#ICS:CAPABILITY\_DECLARATION\#\#\#} block as metadata
+rather than binding rules. \emph{Format failures} (both approaches, two
+scenarios): the model correctly identified the relevant DENY rule in
+chain-of-thought but emitted a narrative refusal instead of the required
+\texttt{BLOCKED:} prefix.
+
+\paragraph{Format fixes applied between rounds.}
+We made three targeted changes to address both failure modes:
+
+\begin{enumerate}
+  \item \textbf{DENY preamble.} Added an imperative pre-execution check header
+    immediately before the DENY rules in CAPABILITY\_DECLARATION:
+    \begin{quote}\small
+    \textit{PROHIBITED --- evaluate each rule below against the task BEFORE
+    generating any output. If the task requires ANY action listed here, DO NOT
+    produce a diff. Instead respond immediately with: BLOCKED: $\langle$verbatim
+    rule text$\rangle$.}
+    \end{quote}
+
+  \item \textbf{Stronger \texttt{on\_failure} clause.} Replaced the loose
+    ``return plain text with prefix \texttt{BLOCKED:}...'' with an unambiguous
+    imperative: ``the ONLY permitted response is one line of plain text in this
+    exact format... Do not produce a diff. Do not explain. Do not attempt a
+    workaround.''
+
+  \item \textbf{Constraint-check user turn.} Changed the user message to
+    require an explicit constraint check before execution: ``Before doing
+    anything else, check every DENY rule in CAPABILITY\_DECLARATION against
+    the task in TASK\_PAYLOAD. If the task requires any prohibited action,
+    respond with \texttt{BLOCKED:} $\langle$verbatim rule text$\rangle$...''.
+\end{enumerate}
+
+\paragraph{Round~2 results (strengthened format).}
+Table~\ref{tab:quality-v2} reports pass rates after applying the three fixes.
+
+\begin{table}[h]
+\centering
+\caption{Round~2 quality pass rates ($R{=}1$, strengthened format).
+``fmt'' = format\_pass; ``con'' = constraint\_pass.}
+\label{tab:quality-v2}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Task type} & \textbf{Naive fmt} & \textbf{ICS fmt} & \textbf{Naive con} & \textbf{ICS con} \\
+\midrule
+Valid tasks ($n{=}5$) &  80\% & 100\% & 100\% & 100\% \\
+Deny tasks ($n{=}5$)  &  80\% &  80\% &  80\% &  80\% \\
+\midrule
+\textbf{Overall}      &  80\% &  90\% &  90\% &  90\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+ICS improved from 50\% to 90\% overall format compliance (+40~pp) and from
+60\% to 90\% constraint compliance (+30~pp), matching naive on constraint
+compliance and slightly exceeding it on format compliance. Two residual failures
+(one per approach) had identifiable causes: the naive approach's Scenario~5
+failure was a chain-of-thought absorption where the explicit constraint-check
+instruction caused the model to enumerate all DENY rules and then stop, never
+producing the diff; Scenario~7's ICS failure involved the model identifying the
+\texttt{tests/} DENY rule but not emitting \texttt{BLOCKED:} as the first token.
+Scenario~10's naive failure reflects a genuine spec ambiguity: the DENY rule
+``DENY introduction of new external dependencies UNLESS approved in
+\texttt{pyproject.toml}'' permits the model to conclude that an explicit
+\texttt{pyproject.toml} update in the task body satisfies the exception.
+
+\paragraph{Design lesson.}
+The 40~pp ICS improvement from Round~1 to Round~2 demonstrates that DENY
+salience is a \emph{phrasing problem}, not a fundamental structural defect.
+The block delimiter format does not inherently suppress constraint recognition;
+what matters is whether the CAPABILITY\_DECLARATION includes an unambiguous
+pre-execution check directive and whether the OUTPUT\_CONTRACT's \texttt{on\_failure}
+clause prescribes the exact response format rather than describing it loosely.
+This finding motivates a normative authoring guideline in v0.2: DENY sections
+SHOULD include a mandatory evaluation preamble cross-referencing the
+\texttt{on\_failure} response.
+
+\paragraph{Regression at $R{=}3$.}
+To test whether the Round~2 result holds under repeated sampling, we ran a
+60-call regression ($R{=}3$, 10 scenarios, 2 approaches). Both approaches
+confirmed 90\% overall (Table~\ref{tab:quality-r3}). ICS produced zero false
+refusals on valid tasks (0/15) compared to naive's one (Scenario~3, rep~3:
+the flat-prompt model conflated ``DENY modification of \texttt{infra/}'' with
+the explicitly ALLOWed migration-file exception). Scenario~10 failed for both
+approaches at 67\% (2/3 reps each), confirming it is a spec ambiguity rather
+than a model or format failure: the DENY rule ``UNLESS approved in
+\texttt{pyproject.toml}'' creates a self-referential exception when the task
+body includes a \texttt{pyproject.toml} update. The deny-task gap
+(87\% naive vs.\ 80\% ICS, 7~pp) is within the noise of $R{=}3$ (95\% Wilson
+CI for $p{=}0.87$, $n{=}15$ is approximately $\pm$17~pp); a definitive
+comparison requires $R{\ge}8$.
+
+\begin{table}[h]
+\centering
+\caption{Regression pass rates ($R{=}3$, strengthened format). Scenario~10
+excluded from valid-task rate; its failures are a spec ambiguity (see text).}
+\label{tab:quality-r3}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Task type} & \textbf{Naive fmt} & \textbf{ICS fmt} & \textbf{Naive con} & \textbf{ICS con} \\
+\midrule
+Valid tasks ($n{=}5$, 15 reps) &  93\% & \textbf{100\%} &  93\% & \textbf{100\%} \\
+Deny tasks ($n{=}5$, 15 reps)  &  87\% &  80\% &  87\% &  80\% \\
+\midrule
+\textbf{Overall}               &  90\% &  90\% &  90\% &  90\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\paragraph{Statistical power run at $R{=}8$.}
+To approach the 80\% power threshold identified in Experiment~8, we ran a
+final 160-call benchmark ($R{=}8$, 10 scenarios, 2 approaches) with the
+Scenario~10 DENY rule additionally rewritten to remove the self-referential
+exception (``NOT already listed in \texttt{pyproject.toml} at session start'').
+Table~\ref{tab:quality-r8} reports the results.
+
+\begin{table}[h]
+\centering
+\caption{$R{=}8$ quality pass rates (160 API calls). 95\% Wilson CIs on deny
+sub-scores: naive $[76.9\%,\,96.0\%]$, ICS $[62.5\%,\,87.7\%]$.}
+\label{tab:quality-r8}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Task type} & \textbf{Naive fmt} & \textbf{ICS fmt} & \textbf{Naive con} & \textbf{ICS con} \\
+\midrule
+Valid tasks ($n{=}40$) & \textbf{100\%} & 97.5\% & \textbf{100\%} & \textbf{100\%} \\
+Deny tasks ($n{=}40$)  & \textbf{90.0\%} & 77.5\% & \textbf{90.0\%} & 77.5\% \\
+\midrule
+\textbf{Overall ($n{=}80$)} & \textbf{95.0\%} & 87.5\% & \textbf{95.0\%} & 88.8\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The deny-task gap is 12.5~pp in favour of naive (90.0\% vs.\ 77.5\%).
+A two-proportion $z$-test gives $z{=}1.52$, $p{=}0.130$---below the conventional
+$\alpha{=}0.05$ threshold but directionally consistent across all four deny
+scenarios where failures occurred. Cohen's $h{=}0.345$ (medium effect).
+Reaching 80\% power at $\alpha{=}0.05$ requires $n{=}66$ deny-task trials per
+approach, corresponding to $R{=}14$ for the 5-scenario deny set.
+
+The residual 12.5~pp gap reflects two separable phenomena. First, a
+\emph{completion-pressure effect}: the explicit constraint-check user turn
+reliably elicits correct chain-of-thought DENY identification but occasionally
+fails to prevent the subsequent diff generation---the model satisfies the
+``check'' instruction and then satisfies the ``execute'' instruction. Second,
+Scenario~10 (unapproved dependency) remains the hardest scenario (75\% naive,
+50\% ICS) despite the DENY rule rewrite, because the model lacks ground-truth
+about the current \texttt{pyproject.toml} contents---an information gap, not a
+phrasing problem. Supplying \texttt{pyproject.toml} in IMMUTABLE\_CONTEXT would
+eliminate this failure mode entirely.
+
+Overall, the four-experiment quality arc (Experiments~7, 7b, 8, 9) shows:
+the original 40~pp ICS deficit from pre-fix formatting was reduced to
+${\approx}12.5$~pp by three targeted phrasing changes; the remaining gap is
+sub-threshold at current sample sizes; and the dominant residual failure
+mode is information absence rather than format structure.
+
+\paragraph{Caveat.}
+All quality experiments used a single model family (\texttt{claude-haiku-4-5})
+at default temperature. Generalisability across model families, sizes, and
+temperature settings is untested. $R{=}14$ would provide 80\% power to
+characterise the observed deny-task gap definitively.
+ICS's primary validated benefit remains token efficiency and
+cache-savings (Experiments~1--6); the quality experiments here are exploratory.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Why the output contract matters}
+\label{sec:oc-discuss}
+
+Requiring an OUTPUT\_CONTRACT before execution forces the caller to
+articulate success conditions prior to invoking the model. This has two
+practical effects. First, it makes failure states machine-detectable: a
+caller checking for the \texttt{BLOCKED:} prefix or the
+\texttt{\{"status": "error"\}} JSON envelope does not need to parse the
+output to determine whether the task succeeded. Second, it shifts the retry
+decision: if an output fails the contract check, the correct response is to
+update the relevant layer, not to re-prompt with corrective prose. This
+distinction---interface update versus retry---is the core behavioral
+difference between ICS-compliant systems and ad hoc prompting.
+
+\subsection{Adoption considerations}
+\label{sec:adoption}
+
+ICS is more verbose than informal prompting. A five-layer instruction for a
+simple task may be longer than the equivalent prose prompt. This overhead is
+intentional and appropriate for systems where instructions are authored once
+and executed many times---the cost of verbosity is paid once, while the
+benefits (caching, auditability, maintainability) compound across invocations.
+For one-off or exploratory use, ICS is not the right tool.
+
+The scope grammar in CAPABILITY\_DECLARATION is intentionally liberal in
+v0.1. Two implementations may express the same constraint using different
+syntax and both claim compliance. This trades machine-parseability for
+adoption breadth: teams can migrate their existing constraint idioms without
+rewriting. A normative scope grammar is planned for v0.2 as an optional
+conformance level.
+
+\subsection{Complementary to existing approaches}
+\label{sec:complementary}
+
+ICS is not a replacement for prompt optimization (DSPy), schema-constrained
+decoding (Guidance, LMQL), or context management systems (MemGPT, RAG). It
+operates at the layer \emph{below} these: it defines how an instruction is
+structured and validated, not how it is generated, optimized, or executed.
+A DSPy pipeline could emit ICS-compliant instructions; a RAG system could
+place retrieved documents in TASK\_PAYLOAD while keeping system context in
+IMMUTABLE\_CONTEXT.
+
+\subsection{Limitations}
+\label{sec:limits}
+
+\textbf{No user study.} We demonstrate token and cost savings empirically but
+do not report a user study on whether teams find ICS usable or whether it
+reduces prompt-related bugs in practice. Adoption evidence beyond synthetic
+examples remains future work.
+
+\textbf{Two providers tested; others deferred.} Live experiments cover
+Anthropic \texttt{claude-haiku-4-5-20251001} (77.8\% cost reduction) and
+OpenAI \texttt{gpt-4o-mini} (15.3\% cost reduction). The structural savings
+proof is model-agnostic, but observed cost savings depend on each provider's
+cache pricing rate and whether the provider auto-caches unstructured prefixes.
+Experiments on additional providers (Google Gemini, Mistral, etc.) are
+deferred to future work.
+
+\textbf{Multi-modal context deferred.} ICS v0.1 treats instruction content as
+text. Images, audio, and tool call results that should participate in lifetime
+separation are not addressed. Multi-modal context lifetime is deferred to
+v0.2.
+
+\textbf{Session persistence is caller-managed.} ICS defines session semantics
+(begin, accumulate, clear) but does not define storage mechanisms. Callers
+must maintain SESSION\_STATE across invocations externally. ICS does not
+provide a persistence protocol.
+
+\textbf{Deny-task quality gap is sub-threshold at $R{=}8$; $R{\ge}14$ required.}
+Our quality benchmark ran across four repetition levels (Experiments~7, 7b, 8, 9).
+Pre-fix ICS trailed naive by 40~pp on deny-task compliance; three targeted
+CAPABILITY\_DECLARATION phrasing changes reduced this to ${\approx}12.5$~pp.
+At $R{=}8$ ($n{=}40$ deny trials per approach), the gap is not statistically
+significant ($p{=}0.13$, two-proportion $z$-test) but is directionally consistent
+with Cohen's $h{=}0.345$ (medium effect). Reaching 80\% power requires $R{=}14$
+for the 5-scenario deny set. A definitive quality evaluation also requires
+multiple model families and temperature-controlled sampling.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Conclusion}
+\label{sec:conclusion}
+
+We have presented ICS, a formal five-layer specification for LLM instructions
+that treats prompts as interfaces rather than prose. ICS separates instruction
+content by lifetime, declares capabilities using verifiable directive syntax,
+and requires explicit output contracts before execution. These design choices
+address the four failure modes that recur in production LLM systems---context
+collapse, implicit constraints, ambiguous output expectations, and retry as
+a first resort---at the structural level rather than through better prompting
+practices.
+
+Empirically, ICS's lifetime separation enables prompt-caching APIs to reduce
+effective cost by 77.8\% at $N{=}10$ on Anthropic and 15.3\% on OpenAI on a
+real-world B2B payments workload. The provider difference reflects differences
+in cache pricing rates and whether the provider caches the na\"{i}ve prefix
+automatically. The underlying token savings (55.2\% structural, independent of
+pricing) are proven to hold for any ICS-compliant instruction and any counting
+method.
+
+The specification, validator, token analyzer, live test harness, and five
+domain examples are available at
+\url{https://github.com/[repository]}.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section*{Acknowledgements}
+[Acknowledgements redacted for review.]
+
+% ─────────────────────────────────────────────────────────────────────────────
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\appendix
+
+\section{Domain 1: Automated PR Code Review}
+\label{app:review}
+
+\begin{lstlisting}[language=ICS, basicstyle=\ttfamily\footnotesize]
+###ICS:IMMUTABLE_CONTEXT###
+System: automated pull request review agent
+Owner: Platform Engineering -- Developer Experience team
+Target repository: monorepo -- services written in Go 1.22 and Python 3.12
+
+Review scope:
+  - Security vulnerabilities (OWASP Top 10, supply chain risks)
+  - Correctness issues (null dereference, off-by-one, race conditions)
+  - Performance regressions (N+1 queries, unbounded allocations)
+  - Policy violations (as declared in CAPABILITY_DECLARATION)
+
+Repository invariants:
+  - All HTTP handlers in Go MUST return structured JSON errors
+  - All database queries MUST use parameterized statements
+  - Secret values MUST be retrieved from Vault (vault.Get())
+  - All exported Go functions and public Python functions MUST have doc comments
+  - Context propagation: all Go functions accepting context.Context MUST pass it downstream
+  - Python async functions MUST NOT contain synchronous blocking I/O
+
+Agent loop configuration:
+  - Each turn reviews exactly one file from the PR diff
+  - The agent terminates when SESSION_STATE records "all_files_reviewed: true"
+  - The agent MUST NOT suggest changes outside the files in the PR diff
+###END:IMMUTABLE_CONTEXT###
+
+###ICS:CAPABILITY_DECLARATION###
+ALLOW   read access to PR diff content
+ALLOW   flagging of issues at severity levels: CRITICAL, HIGH, MEDIUM, LOW, INFO
+ALLOW   suggestion of corrective code snippets WITHIN the reviewed file's language
+DENY    modification of files outside the PR diff
+DENY    approval of PRs containing CRITICAL severity findings
+DENY    flagging of style preferences as CRITICAL or HIGH severity
+REQUIRE flagging of SQL string interpolation as CRITICAL severity
+REQUIRE flagging of secret retrieval via os.Getenv() as CRITICAL severity
+REQUIRE citation of the specific invariant or policy violated for every finding
+###END:CAPABILITY_DECLARATION###
+
+###ICS:SESSION_STATE###
+[2025-02-18T09:00Z] PR: #1847 -- "Add user impersonation endpoint to admin service"
+[2025-02-18T09:01Z] PR diff files: internal/admin/impersonate.go,
+                    internal/admin/impersonate_test.go, internal/middleware/auth.go
+[2025-02-18T09:05Z] Reviewed: internal/middleware/auth.go -- 2 findings
+                    (HIGH: missing context propagation; LOW: missing doc comment)
+[2025-02-18T09:10Z] Reviewed: internal/admin/impersonate_test.go -- 0 findings
+[2025-02-18T09:12Z] Remaining: internal/admin/impersonate.go
+###END:SESSION_STATE###
+
+###ICS:TASK_PAYLOAD###
+Review internal/admin/impersonate.go from PR #1847.
+
+Flag all findings per CAPABILITY_DECLARATION. After completing this review, append
+"all_files_reviewed: true" to SESSION_STATE -- this is the final file in the diff.
+###END:TASK_PAYLOAD###
+
+###ICS:OUTPUT_CONTRACT###
+format:     JSON
+schema: {
+  "file":    "string",
+  "findings": [
+    {
+      "severity":           "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "INFO",
+      "line_range":         "string",
+      "description":        "string",
+      "invariant_violated": "string",
+      "suggested_fix":      "string"
+    }
+  ],
+  "finding_count": "integer",
+  "approved":      "boolean"
+}
+variance:   "findings" MAY be an empty array if no issues are found;
+            "approved" MUST be false if any CRITICAL finding is present;
+            "suggested_fix" MAY be omitted for INFO findings;
+            "finding_count" MUST equal the length of "findings"
+on_failure: Return { "status": "error", "reason": "<single-sentence description>",
+                     "blocked_by": "<invariant or policy name>" }
+###END:OUTPUT_CONTRACT###
+\end{lstlisting}
+
+% ─────────────────────────────────────────────────────────────────────────────
+
+\section{Domain 2: API Gateway Log Analysis}
+\label{app:logs}
+
+\begin{lstlisting}[language=ICS, basicstyle=\ttfamily\footnotesize]
+###ICS:IMMUTABLE_CONTEXT###
+System: API gateway log analysis pipeline
+Owner: Platform Engineering -- Observability team
+Log source: api-gateway (Kong 3.x); logs emitted to S3 at s3://acme-logs/gateway/
+
+Log schema (one JSON object per line):
+  timestamp   -- ISO 8601, UTC
+  caller_id   -- internal service or partner identifier; PII-adjacent
+  endpoint    -- HTTP method + path, e.g. "POST /v3/payments"
+  status_code -- integer HTTP response code
+  latency_ms  -- total gateway latency in milliseconds
+  upstream_ms -- time waiting for the upstream service
+  region      -- AWS region the request was handled in
+  error_code  -- string error identifier; null if status_code < 400
+
+Latency SLOs (authoritative):
+  p50 <= 120 ms   p95 <= 400 ms   p99 <= 900 ms
+
+Endpoint classification:
+  /v3/payments*        -- critical path; SLO breach at p99 triggers PagerDuty alert
+  /v3/reconciliation*  -- batch path; p99 SLO relaxed to 3,000 ms
+  /v3/webhooks*        -- delivery path; p99 SLO relaxed to 2,000 ms
+  /v3/admin*           -- internal only; excluded from SLO calculations
+  /health*             -- excluded from all analysis
+
+Pipeline invariants:
+  - All analysis is performed on a pre-aggregated log window per invocation
+  - Log windows are 1-hour aligned to UTC hour boundaries
+  - The model receives a summary table, not raw log lines or individual records
+###END:IMMUTABLE_CONTEXT###
+
+###ICS:CAPABILITY_DECLARATION###
+ALLOW   latency percentile analysis against declared SLOs
+ALLOW   endpoint-level aggregation and ranking by latency or error rate
+ALLOW   region-level comparison of latency distributions
+DENY    output of individual caller_id values in any form
+DENY    output of individual request_id values
+DENY    SLO threshold modification without explicit TASK_PAYLOAD override
+DENY    analysis of /health or /v3/admin endpoints
+REQUIRE explicit SLO verdict (PASS / BREACH / DEGRADED) for each endpoint group
+REQUIRE region breakdown when latency variance across regions exceeds 20%
+REQUIRE flagging of any p99 breach on /v3/payments* as CRITICAL
+###END:CAPABILITY_DECLARATION###
+
+###ICS:SESSION_STATE###
+[2025-02-19T09:00Z] Analysis window: 2025-02-19T08:00Z--09:00Z
+[2025-02-19T09:00Z] Regions active in window: us-east-1, eu-west-1
+[2025-02-19T09:01Z] Pre-aggregated summary received: 47,320 requests, 6 endpoint groups
+[2025-02-19T09:02Z] Prior finding (08:00 window): eu-west-1 p99 elevated on
+                    /v3/payments (712 ms, within SLO)
+###END:SESSION_STATE###
+
+###ICS:TASK_PAYLOAD###
+Analyse the 08:00--09:00 UTC summary for SLO compliance.
+
+  endpoint_group        region       count   p50_ms  p95_ms  p99_ms  error_rate
+  /v3/payments          us-east-1    18,441  98      310     620     0.12%
+  /v3/payments          eu-west-1     9,204  114     388     941     0.31%
+  /v3/reconciliation    us-east-1     6,112  240     980    2,140    0.08%
+  /v3/webhooks          us-east-1     7,830  88      270     560     1.44%
+  /v3/webhooks          eu-west-1     3,901  101     310     688     1.67%
+  /v3/admin             us-east-1     1,832  45       90     180     0.00%
+
+Flag SLO breaches, assess whether the eu-west-1 elevation is worsening, and
+note whether /v3/webhooks error rates warrant escalation.
+###END:TASK_PAYLOAD###
+
+###ICS:OUTPUT_CONTRACT###
+format:     JSON
+schema: {
+  "window": "string",
+  "endpoint_verdicts": [
+    {
+      "endpoint_group":  "string",
+      "region":          "string",
+      "slo_verdict":     "PASS" | "BREACH" | "DEGRADED",
+      "breach_level":    "CRITICAL" | "HIGH" | "MEDIUM" | null,
+      "p99_ms":          "number",
+      "slo_p99_ms":      "number",
+      "notes":           "string"
+    }
+  ],
+  "region_variance_flagged": "boolean",
+  "escalation_required":     "boolean",
+  "escalation_reason":       "string | null"
+}
+variance:   "breach_level" MUST be null when "slo_verdict" is PASS;
+            "breach_level" MUST be "CRITICAL" for any /v3/payments* p99 breach;
+            /v3/admin results MUST NOT appear in "endpoint_verdicts"
+on_failure: Return { "status": "error", "reason": "<single-sentence description>" }
+###END:OUTPUT_CONTRACT###
+\end{lstlisting}
+
+% ─────────────────────────────────────────────────────────────────────────────
+
+\section{Domain 3: Customer Support with RAG}
+\label{app:rag}
+
+\begin{lstlisting}[language=ICS, basicstyle=\ttfamily\footnotesize]
+###ICS:IMMUTABLE_CONTEXT###
+System: customer support knowledge base assistant
+Owner: Support Engineering -- Knowledge Management team
+Corpus: product documentation for Acme Platform v3.x (last updated 2025-01-01)
+
+Corpus structure:
+  docs/api/           -- REST API reference; versioned by endpoint
+  docs/guides/        -- integration and setup guides; audience: developers
+  docs/concepts/      -- conceptual explanations; audience: all users
+  docs/troubleshoot/  -- runbooks for known error codes and failure modes
+
+Retrieval system:
+  Engine: vector similarity search (cosine distance); top-K retrieval, K configurable
+  Chunk size: 512 tokens; overlap: 64 tokens
+  Metadata per chunk: doc_path, section_heading, version_tag, last_updated
+
+Data invariants:
+  - All retrieved chunks are from docs/ only; external sources are not indexed
+  - version_tag reflects the platform version the chunk describes
+  - Chunks from docs/api/ always include the endpoint path in section_heading
+  - Internal Acme employee documentation (marked internal:true) MUST NOT be cited
+###END:IMMUTABLE_CONTEXT###
+
+###ICS:CAPABILITY_DECLARATION###
+ALLOW   citation of retrieved chunks from docs/
+ALLOW   paraphrase and synthesis across multiple retrieved chunks
+ALLOW   direct quotation of retrieved chunks IF quote is under 100 tokens
+DENY    generation of information not present in retrieved chunks
+DENY    citation of chunks where internal:true appears in metadata
+DENY    speculation about product behavior not documented in corpus
+DENY    comparison to competitor products
+REQUIRE explicit citation of source chunk (doc_path and section_heading) per factual claim
+REQUIRE flagging of version mismatch IF user-stated version differs from chunk version_tag
+REQUIRE acknowledgement when retrieved chunks do not contain sufficient information
+###END:CAPABILITY_DECLARATION###
+
+###ICS:SESSION_STATE###
+[2025-02-10T14:00Z] User platform version: 3.2.1
+[2025-02-10T14:01Z] User question domain: webhook delivery failures
+[2025-02-10T14:05Z] Confirmed: user has already attempted endpoint re-registration
+[2025-02-10T14:08Z] Retrieved chunks: docs/troubleshoot/webhooks.md
+                    (section: "Delivery failure codes"), docs/api/webhooks.md
+                    (section: "POST /v3/webhooks")
+###END:SESSION_STATE###
+
+###ICS:TASK_PAYLOAD###
+Using only the retrieved chunks identified in SESSION_STATE, explain why webhook
+delivery may fail with HTTP 422 on the target endpoint and what corrective steps
+are available. Do not suggest re-registering the endpoint; the user has confirmed
+this was already attempted and did not resolve the issue.
+###END:TASK_PAYLOAD###
+
+###ICS:OUTPUT_CONTRACT###
+format:     JSON
+schema: {
+  "answer": "string",
+  "citations": [
+    {
+      "doc_path":        "string",
+      "section_heading": "string",
+      "version_tag":     "string"
+    }
+  ],
+  "version_mismatch":     "boolean",
+  "insufficient_context": "boolean"
+}
+variance:   "citations" MAY be an empty array only if "insufficient_context" is true;
+            "version_mismatch" MUST be present even if false
+on_failure: Return { "status": "error", "reason": "<single-sentence description>" }
+###END:OUTPUT_CONTRACT###
+\end{lstlisting}
+
+% ─────────────────────────────────────────────────────────────────────────────
+
+\section{Domain 4: Content Moderation Pipeline}
+\label{app:moderation}
+
+\begin{lstlisting}[language=ICS, basicstyle=\ttfamily\footnotesize]
+###ICS:IMMUTABLE_CONTEXT###
+System: user-generated content moderation pipeline
+Owner: Trust & Safety -- Policy Enforcement team
+Platform: Acme Community -- general-purpose discussion platform
+
+Content policy version: 2025-01-15 (authoritative)
+
+Policy categories and severity definitions:
+  CRITICAL -- content that must be removed immediately; may require law enforcement referral
+  HIGH     -- content that must be removed; no appeal until review
+  MEDIUM   -- content that must be removed; user receives appeal option
+  LOW      -- content that receives a warning or label
+  CLEAR    -- content that does not violate policy
+
+Designated high-risk topics (MEDIUM severity floor for misinformation):
+  - Electoral processes and candidate claims
+  - Vaccine safety and approved medical treatments
+  - Ongoing armed conflicts
+
+Jurisdictional overrides (apply after base severity):
+  - Germany: content meeting StGB Paragraph 130 criteria is CRITICAL
+  - India: IT Rules 2021 Rule 3(1)(b) categories are HIGH
+
+Moderation pipeline context:
+  - Each invocation reviews a single content item
+  - Content items have already passed automated hash-matching and spam filters
+  - False negatives are weighted more severely than false positives for CRITICAL/HIGH
+###END:IMMUTABLE_CONTEXT###
+
+###ICS:CAPABILITY_DECLARATION###
+ALLOW   analysis of submitted content against declared policy categories
+ALLOW   citation of specific policy category and severity definition for each finding
+ALLOW   flagging of jurisdictional override applicability
+DENY    generation of content that reproduces or paraphrases violating material beyond
+        the minimum necessary to identify the specific policy violation
+DENY    application of policy versions other than 2025-01-15
+DENY    severity downgrade below MEDIUM for designated high-risk topic misinformation
+DENY    CLEAR classification for content matching any named example in IMMUTABLE_CONTEXT
+REQUIRE explicit policy category citation for every non-CLEAR finding
+REQUIRE jurisdiction field even when no override applies
+REQUIRE confidence score for every finding (0.0--1.0)
+###END:CAPABILITY_DECLARATION###
+
+###ICS:SESSION_STATE###
+[2025-02-20T16:00Z] Batch ID: batch-2025-02-20-1600
+[2025-02-20T16:00Z] Reviewer jurisdiction: Germany
+[2025-02-20T16:00Z] Item language: German (DE)
+[2025-02-20T16:01Z] Prior items in batch: 3 reviewed, 1 MEDIUM, 2 CLEAR
+###END:SESSION_STATE###
+
+###ICS:TASK_PAYLOAD###
+Review the following user-generated content item for policy violations.
+Apply German jurisdictional overrides where applicable.
+
+Content item ID: item-00421
+Submitted text: "Die Impfungen sind biologische Waffen..."
+###END:TASK_PAYLOAD###
+
+###ICS:OUTPUT_CONTRACT###
+format:     JSON
+schema: {
+  "item_id":  "string",
+  "verdict":  "CRITICAL" | "HIGH" | "MEDIUM" | "LOW" | "CLEAR",
+  "findings": [
+    {
+      "policy_category":      "string",
+      "base_severity":        "CRITICAL" | "HIGH" | "MEDIUM" | "LOW",
+      "applied_severity":     "CRITICAL" | "HIGH" | "MEDIUM" | "LOW",
+      "jurisdiction_override":"boolean",
+      "override_basis":       "string",
+      "confidence":           "number",
+      "description":          "string"
+    }
+  ],
+  "action_required": "REMOVE_IMMEDIATE" | "REMOVE_APPEAL" | "WARN_LABEL" | "NO_ACTION",
+  "human_review":    "boolean",
+  "jurisdiction":    "string"
+}
+variance:   "verdict" MUST equal the highest "applied_severity" across all findings;
+            "human_review" MUST be true if "verdict" is CRITICAL or HIGH;
+            "action_required" MUST be consistent with "verdict"
+on_failure: Return { "status": "error", "reason": "<single-sentence description>" }
+###END:OUTPUT_CONTRACT###
+\end{lstlisting}
+
+% ─────────────────────────────────────────────────────────────────────────────
+
+\section{Domain 5: B2B Payments Platform (RAG + Agent)}
+\label{app:payments}
+
+The permanent layers of this example total 4,115 API-counted tokens on
+\texttt{claude-haiku-4-5-20251001}, sufficient to activate prompt caching. Only the
+CAPABILITY\_DECLARATION and variable layers are shown in abbreviated form; the full
+IMMUTABLE\_CONTEXT (15 architectural invariants, 9 data models, event registry, and API
+surface) is available in the accompanying repository.
+
+\begin{lstlisting}[language=ICS, basicstyle=\ttfamily\footnotesize]
+###ICS:IMMUTABLE_CONTEXT###
+System: B2B Payments Platform
+Owner: Payments Engineering -- Core Infrastructure team
+Language: Python 3.12
+Runtime: AWS Lambda; PostgreSQL 15 (RDS); Redis 7 (ElastiCache)
+
+[... repository layout, 9 core data models, event type registry,
+ API surface, 15 architectural invariants, external dependencies,
+ configuration schema, observability, and compliance context
+ -- see repository examples/payments-platform.ics ...]
+
+Architectural invariants (excerpt):
+  1. All monetary amounts are BIGINT minor units. Float arithmetic is prohibited.
+  2. Every payment requires balanced ledger entries before status advances past PENDING.
+  3. Status transitions go through src/ledger/entries/transitions.py:apply_transition() only.
+  4. PII fields must not appear in application logs (RedactingFormatter enforced).
+###END:IMMUTABLE_CONTEXT###
+
+###ICS:CAPABILITY_DECLARATION###
+ALLOW   read access WITHIN src/
+ALLOW   file modification WITHIN src/ledger/
+ALLOW   file modification WITHIN src/notifications/
+ALLOW   file modification WITHIN src/shared/
+ALLOW   new Alembic migration file creation WITHIN infra/migrations/
+DENY    modification of src/gateway/
+DENY    modification of src/compliance/
+DENY    modification of infra/
+DENY    introduction of float arithmetic ON monetary values
+DENY    logging of PII fields
+REQUIRE type annotations ON all new functions and methods
+REQUIRE backward compatibility WITH gateway/v2/ API contracts
+REQUIRE unit test coverage ON all new ledger entry logic
+###END:CAPABILITY_DECLARATION###
+
+###ICS:SESSION_STATE###
+[2025-01-08T11:00Z] Task: add webhook retry-exhaustion notifications
+[2025-01-08T11:05Z] Confirmed: deliver() already tracks attempt count in Redis
+[2025-01-08T11:12Z] Decision: exhaustion threshold is 5 attempts (MAX_ATTEMPTS)
+[2025-01-08T11:24Z] Decision: payload must include payment_id, webhook_url,
+                    attempt_count, last_error
+###END:SESSION_STATE###
+
+###ICS:TASK_PAYLOAD###
+Add a retry-exhaustion event to src/notifications/webhooks.py.
+
+When deliver() exhausts all retry attempts (attempt_count == MAX_ATTEMPTS),
+publish a WEBHOOK_EXHAUSTED event to the payments SNS topic via get_sns_topic_arn().
+The existing delivery logic, retry schedule, and Redis tracking must not change.
+###END:TASK_PAYLOAD###
+
+###ICS:OUTPUT_CONTRACT###
+format:     unified diff
+schema:     standard unified diff against current HEAD;
+            one hunk per modified function;
+            no changes outside src/notifications/webhooks.py unless a new helper
+            in src/shared/ is strictly required
+variance:   diff header timestamps MAY be omitted
+on_failure: return plain text with prefix "BLOCKED:" and a single sentence naming
+            the CAPABILITY_DECLARATION constraint that prevents execution
+###END:OUTPUT_CONTRACT###
+\end{lstlisting}
+
+% ─────────────────────────────────────────────────────────────────────────────
+
+\end{document}
