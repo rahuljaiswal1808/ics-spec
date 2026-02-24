@@ -90,13 +90,15 @@ content by \emph{lifetime}: permanent context, capability declarations,
 session state, per-invocation tasks, and output contracts. This separation
 enables prompt-caching APIs to serve stable content at reduced rates. We
 provide a formal grammar for capability directives, a conformance checker, and
-empirical evaluation on a real-world B2B payments platform workload. Across
-ten API invocations on \texttt{claude-haiku-4-5-20251001}, ICS-structured
-instructions achieve a \textbf{77.8\%} reduction in effective API cost
-compared to the na\"{i}ve flat-prompt baseline, with a proven lower bound of
-55\% token savings at $N{=}10$ that is independent of model or counting
-method. ICS is model-agnostic, framework-independent, and available as an
-open specification.
+empirical evaluation on a real-world B2B payments platform workload across two
+providers. ICS-structured instructions achieve a \textbf{77.8\%} reduction in
+effective API cost on Anthropic \texttt{claude-haiku-4-5-20251001} and a
+\textbf{15.3\%} reduction on OpenAI \texttt{gpt-4o-mini} compared to the
+na\"{i}ve flat-prompt baseline, with a proven lower bound of 55\% token savings
+at $N{=}10$ that is independent of model or counting method. The provider
+difference is explained by cache rate ($0.10\times$ vs.\ $0.50\times$) and
+whether the na\"{i}ve approach benefits from automatic caching. ICS is
+model-agnostic, framework-independent, and available as an open specification.
 \end{abstract}
 
 % ─────────────────────────────────────────────────────────────────────────────
@@ -605,21 +607,26 @@ $N$ & Na\"{i}ve tokens & ICS tokens & Saved & Savings \% \\
 \subsection{Live API measurement}
 \label{sec:live}
 
-We ran both the na\"{i}ve and ICS approaches against the Anthropic Messages
-API using \texttt{claude-haiku-4-5-20251001} on the payments-platform example
-(Domain~5). The ICS approach places the permanent layers in a single content
-block marked \texttt{cache\_control: ephemeral}; the variable layers are in
-separate unmarked blocks. The na\"{i}ve approach sends the full instruction
-as a flat string with no cache markup.
+We ran both approaches on the payments-platform example (Domain~5) against two
+providers: Anthropic and OpenAI. In both cases the TASK\_PAYLOAD and
+SESSION\_STATE layers vary per invocation while the permanent layers
+(IMMUTABLE\_CONTEXT and CAPABILITY\_DECLARATION, totalling 4,115 tokens) remain
+unchanged across all 10 invocations.
 
-We measured \texttt{input\_tokens}, \texttt{cache\_creation\_input\_tokens},
-and \texttt{cache\_read\_input\_tokens} from the API response \texttt{usage}
-field across 10 invocations.
+\paragraph{Anthropic (\texttt{claude-haiku-4-5-20251001}).}
+The ICS approach places the permanent layers in a single content block marked
+\texttt{cache\_control: ephemeral}; the na\"{i}ve approach sends the full
+instruction as a flat string with no cache markup. We measured
+\texttt{input\_tokens}, \texttt{cache\_creation\_input\_tokens}, and
+\texttt{cache\_read\_input\_tokens} from the API \texttt{usage} field across
+10 invocations. The cache was warm from invocation~1 due to a prior warm-up
+call; every ICS invocation read the permanent block from cache at $0.10\times$
+the standard rate.
 
 \begin{table}[h]
 \centering
-\caption{Live API token usage at $N{=}10$. Permanent layer: 4,115 tokens.}
-\label{tab:live}
+\caption{Anthropic live API token usage at $N{=}10$. Permanent layer: 4,115 tokens.}
+\label{tab:live-anthropic}
 \begin{tabular}{lrrrr}
 \toprule
 \textbf{Approach} & \textbf{Full-rate tokens} & \textbf{Cache-write} & \textbf{Cache-read} & \textbf{Cost (USD)} \\
@@ -630,12 +637,9 @@ ICS       & 4,850  & 0      & 41,150 & \$0.00845 \\
 \end{tabular}
 \end{table}
 
-Applying Anthropic's caching rates (cache writes at $1.25\times$ standard,
-cache reads at $0.10\times$ standard), the ICS approach achieves a
-\textbf{77.8\%} cost reduction at $N{=}10$ (\$0.02966 saved per 10-invocation
-session). The cache was warm from invocation 1 due to a prior warm-up call
-during threshold testing; every subsequent ICS invocation read 4,115 tokens
-from cache at the reduced rate.
+The ICS approach achieves a \textbf{77.8\%} cost reduction at $N{=}10$
+(\$0.02966 saved per session). The na\"{i}ve approach receives zero cache
+reads because Anthropic's API only caches content in explicitly marked blocks.
 
 \paragraph{Cache activation threshold.}
 We empirically established that \texttt{claude-haiku-4-5-20251001} requires
@@ -644,6 +648,53 @@ than the 1,024-token threshold documented for Claude~3 models. ICS's
 requirement that IMMUTABLE\_CONTEXT be semantically complete encourages callers
 to include full context in this layer, naturally pushing its size toward the
 activation threshold for real-world workloads.
+
+\paragraph{OpenAI (\texttt{gpt-4o-mini}).}
+OpenAI's caching is fully automatic: any request whose prefix matches a prior
+request of $\geq{1{,}024}$ tokens is served at $0.50\times$ the input
+rate~\citep{openai2024caching}, with no caller-side markup required. We ran
+the same 10-invocation experiment using \texttt{ics\_live\_test.py --provider openai}
+and read \texttt{cached\_tokens} from the \texttt{usage.prompt\_tokens\_details}
+field.
+
+\begin{table}[h]
+\centering
+\caption{OpenAI live API token usage at $N{=}10$. Permanent layer: 4,115 tokens.}
+\label{tab:live-openai}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Approach} & \textbf{Full-rate tokens} & \textbf{Cache-write} & \textbf{Cache-read} & \textbf{Cost (USD)} \\
+\midrule
+Na\"{i}ve & 8,776  & 0      & 31,744 & \$0.00389 \\
+ICS       & 840    & 0      & 39,680 & \$0.00329 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The ICS approach achieves a \textbf{15.3\%} cost reduction at $N{=}10$
+(\$0.00060 saved per session). The substantially smaller saving compared to
+Anthropic arises from two factors. First, OpenAI's automatic caching eventually
+caches the na\"{i}ve prefix too: invocations~1--2 ran at full rate, but from
+invocation~3 onward the na\"{i}ve approach also benefited from cache reads.
+ICS's structural advantage in this setting is therefore primarily temporal:
+cache hits from invocation~1 rather than invocation~3. Second, OpenAI's
+$0.50\times$ cache rate is less aggressive than Anthropic's $0.10\times$,
+reducing the pricing amplification on cached tokens. Table~\ref{tab:savings-summary}
+summarises the cross-provider comparison.
+
+\begin{table}[h]
+\centering
+\caption{Cross-provider cost savings summary at $N{=}10$.}
+\label{tab:savings-summary}
+\begin{tabular}{llrrrr}
+\toprule
+\textbf{Provider} & \textbf{Model} & \textbf{Cache rate} & \textbf{Na\"{i}ve auto-caches?} & \textbf{Cost saving} \\
+\midrule
+Anthropic & claude-haiku-4-5-20251001 & $0.10\times$ & No  & \textbf{77.8\%} \\
+OpenAI    & gpt-4o-mini               & $0.50\times$ & Yes (from inv.\ 3) & \textbf{15.3\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 % ─────────────────────────────────────────────────────────────────────────────
 \section{Discussion}
@@ -699,10 +750,13 @@ do not report a user study on whether teams find ICS usable or whether it
 reduces prompt-related bugs in practice. Adoption evidence beyond synthetic
 examples remains future work.
 
-\textbf{Single model family tested.} Live experiments use \texttt{claude-haiku-4-5-20251001}.
-The structural savings proof is model-agnostic, but the observed
-cost savings depend on a provider's caching pricing schedule. Experiments on
-OpenAI and other providers with caching APIs are deferred to future work.
+\textbf{Two providers tested; others deferred.} Live experiments cover
+Anthropic \texttt{claude-haiku-4-5-20251001} (77.8\% cost reduction) and
+OpenAI \texttt{gpt-4o-mini} (15.3\% cost reduction). The structural savings
+proof is model-agnostic, but observed cost savings depend on each provider's
+cache pricing rate and whether the provider auto-caches unstructured prefixes.
+Experiments on additional providers (Google Gemini, Mistral, etc.) are
+deferred to future work.
 
 \textbf{Multi-modal context deferred.} ICS v0.1 treats instruction content as
 text. Images, audio, and tool call results that should participate in lifetime
@@ -728,9 +782,12 @@ a first resort---at the structural level rather than through better prompting
 practices.
 
 Empirically, ICS's lifetime separation enables prompt-caching APIs to reduce
-effective cost by 77.8\% at $N{=}10$ on a real-world B2B payments workload.
-The underlying token savings (55.2\% structural, independent of pricing) are
-proven to hold for any ICS-compliant instruction and any counting method.
+effective cost by 77.8\% at $N{=}10$ on Anthropic and 15.3\% on OpenAI on a
+real-world B2B payments workload. The provider difference reflects differences
+in cache pricing rates and whether the provider caches the na\"{i}ve prefix
+automatically. The underlying token savings (55.2\% structural, independent of
+pricing) are proven to hold for any ICS-compliant instruction and any counting
+method.
 
 The specification, validator, token analyzer, live test harness, and five
 domain examples are available at

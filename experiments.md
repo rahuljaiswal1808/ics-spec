@@ -168,6 +168,58 @@ and pricing saving of **77.8%** at N=10.
 
 ---
 
+---
+
+## Experiment 6 — Cross-provider live measurement (OpenAI)
+
+**Question:** Does the ICS caching benefit replicate on OpenAI's automatic prefix-caching API?
+
+**Method:** Run `python3 ics_live_test.py examples/payments-platform.ics --invocations 10 --provider openai` with a valid `OPENAI_API_KEY`. Read `cached_tokens` from `usage.prompt_tokens_details` in each API response.
+
+**Model:** `gpt-4o-mini`
+**Permanent layer tokens (API-counted):** 4,115
+
+**Observed result (per-invocation):**
+
+| Invocation | Approach | `input_tokens` (full-rate) | `cached_tokens` |
+|---|---|---|---|
+| 1–2 | naive | 4,052 | 0 |
+| 3–10 | naive | 84 | 3,968 |
+| 1–10 | ics | 84 | 3,968 |
+
+OpenAI's automatic caching activates for the naive approach from invocation 3 onward
+(after ~2 identical requests). ICS's structural advantage here is temporal: cache
+hits from invocation 1 vs. invocation 3 for naive.
+
+**Summary at 10 invocations:**
+
+| Metric | Naive | ICS |
+|---|---|---|
+| Full-rate input tokens | 8,776 | 840 |
+| Cache-write tokens | — | — |
+| Cache-read tokens (0.50×) | 31,744 | 39,680 |
+| Estimated cost (USD) | $0.00389 | $0.00329 |
+| **Cost saved** | | **$0.00060 (15.3%)** |
+
+**Key difference from Anthropic (Experiment 5):**
+
+| Factor | Anthropic | OpenAI |
+|---|---|---|
+| Cache rate | 0.10× | 0.50× |
+| Naive approach cached? | No (explicit markup required) | Yes (auto, from inv. 3) |
+| Cost saving at N=10 | 77.8% | 15.3% |
+
+The 15.3% saving is smaller because: (1) OpenAI's automatic caching eventually
+helps the naive approach too, removing ICS's structural advantage from invocation 3
+onward; (2) the 0.50× cache rate (vs Anthropic's 0.10×) reduces pricing amplification
+on cached tokens.
+
+**Conclusion:** Confirmed. ICS delivers earlier cache activation on OpenAI (invocation 1
+vs. invocation 3 for naive), but the combined saving is 15.3% rather than 77.8% due to
+OpenAI's automatic caching and less aggressive cache pricing.
+
+---
+
 ## Summary
 
 | Experiment | Status | Savings measured |
@@ -176,8 +228,12 @@ and pricing saving of **77.8%** at N=10.
 | 2. Counting method independence | **Proven** | 53–55% at N=10, stable across methods |
 | 3. Scaling with N | **Proven** | Grows monotonically; ~63% at N=50 |
 | 4. Prompt-caching request structure | **Verified** | Correct `cache_control` placement confirmed by dry-run |
-| 5. Live API measurement | **Confirmed** | 77.8% cost saving at N=10; `cache_read_input_tokens` verified |
+| 5. Live API measurement (Anthropic) | **Confirmed** | 77.8% cost saving at N=10; `cache_read_input_tokens` verified |
+| 6. Live API measurement (OpenAI) | **Confirmed** | 15.3% cost saving at N=10; automatic prefix caching observed |
 
-All five experiments are now complete. The structural savings claim (Experiments 1–3)
-is proven without any API dependency. The pricing-amplification claim (Experiment 5)
-is confirmed with real API responses on `claude-haiku-4-5-20251001`.
+All six experiments are now complete. The structural savings claim (Experiments 1–3)
+is proven without any API dependency. The pricing-amplification claim is confirmed
+on two providers (Experiments 5–6): Anthropic achieves 77.8% at N=10 (explicit
+`cache_control` markup, 0.10× rate), OpenAI achieves 15.3% at N=10 (automatic
+prefix caching, 0.50× rate). The provider difference is explained by cache pricing
+schedules and whether the naive approach benefits from automatic caching.
