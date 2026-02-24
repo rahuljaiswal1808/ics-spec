@@ -108,9 +108,14 @@ maintainable. These tools exist because interfaces that rely on shared
 context, informal conventions, and implied constraints do not compose and do
 not scale.
 
-LLM instructions have not received the same treatment. Instructions are
-typically written as natural language prose, structured loosely by convention,
-and stored in files with no machine-readable semantics. When a system that
+LLM instructions have not received the same treatment. The in-context learning
+paradigm established by \citet{brown2020gpt3} showed that instructions and
+examples, provided as plain text in the model's context, can direct a wide range
+of behaviours without any weight update. This discovery was enormously powerful,
+but it also established an informal default: instructions as prose. In
+production systems, instructions are typically written as natural language prose,
+structured loosely by convention, and stored in files with no machine-readable
+semantics. When a system that
 uses an LLM instruction misbehaves, diagnosing whether the fault lies in the
 model, the instruction, or the caller's interpretation of the output requires
 manual inspection. When the instruction must be reused in a new context or
@@ -220,7 +225,10 @@ for shared prefix reuse across requests. ICS's lifetime-separation design
 directly enables these mechanisms by making the stable prefix structurally
 explicit---the IMMUTABLE\_CONTEXT and CAPABILITY\_DECLARATION layers are
 always positioned first and never change across invocations in a session,
-making them natural cache targets.
+making them natural cache targets. OpenAI's automatic prefix caching~\citep{openai2024caching}
+caches prefixes of $\geq 1{,}024$ tokens with no explicit markup required;
+ICS's non-redefinition rule is precisely the structural guarantee that keeps
+prefixes stable across invocations, preventing accidental cache invalidation.
 
 \paragraph{Formal specifications for LLMs.}
 Closest to ICS in spirit is TypeChat~\citep{typechat2023}, which uses type
@@ -230,6 +238,35 @@ decoding~\citep{willard2023efficient,geng2023grammar}. These focus on
 There is, to our knowledge, no prior work that defines a formal
 \emph{multi-layer input specification} for LLM instructions with explicit
 lifetime semantics, directive syntax, and a conformance model.
+
+\paragraph{Prompt sensitivity and reliability.}
+\citet{sclar2024sensitivity} show that open-source LLMs shift task accuracy
+by up to 76 percentage points in response to trivial prompt formatting changes
+(separators, spacing, capitalisation), with no change in semantic content.
+\citet{brown2020gpt3} established that unstructured in-context examples encode
+task behavior, implicitly confirming that prompt \emph{form} matters as much as
+prompt \emph{content}. ICS responds to this brittleness structurally: mandatory
+canonical ordering, explicit constraints, and non-redefinition rules eliminate
+the degrees of freedom that these sensitivity studies show are dangerous.
+
+\paragraph{Context position and attention.}
+\citet{liu2024lost} demonstrate a U-shaped utilisation curve in long-context
+LLMs: models attend most reliably to content at the very beginning and very end
+of the context window, degrading substantially for material placed in the
+middle. ICS's layer ordering---IMMUTABLE\_CONTEXT first, OUTPUT\_CONTRACT
+last, TASK\_PAYLOAD in the penultimate position---aligns critical content with
+the positions models attend to most reliably. The non-redefinition rule
+prevents constraints from being accidentally buried in the middle by restating
+them near the task.
+
+\paragraph{Prompt injection.}
+\citet{liu2024injection} provide the first formal definition and systematic
+benchmark of prompt injection attacks. ICS's CAPABILITY\_DECLARATION layer
+creates a structural permission boundary: injected content in TASK\_PAYLOAD
+cannot override \texttt{DENY} directives declared in an earlier layer, because
+the non-redefinition rule (ICS \S4.2) prohibits later layers from contradicting
+earlier constraints. ICS thus provides a specification-level defence against the
+mechanism by which injection succeeds in flat-prompt architectures.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \section{The ICS Specification}
