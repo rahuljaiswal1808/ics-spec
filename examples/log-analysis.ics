@@ -1,0 +1,97 @@
+###ICS:IMMUTABLE_CONTEXT###
+System: API gateway log analysis pipeline
+Owner: Platform Engineering — Observability team
+Log source: api-gateway (Kong 3.x); logs emitted to S3 at s3://acme-logs/gateway/
+
+Log schema (one JSON object per line):
+  timestamp   — ISO 8601, UTC
+  request_id  — UUID, unique per request
+  caller_id   — internal service or partner identifier; PII-adjacent; must not appear in output
+  endpoint    — HTTP method + path, e.g. "POST /v3/payments"
+  status_code — integer HTTP response code
+  latency_ms  — total gateway latency in milliseconds (includes upstream wait)
+  upstream_ms — time waiting for the upstream service (subset of latency_ms)
+  region      — AWS region the request was handled in (us-east-1, eu-west-1, ap-southeast-1)
+  error_code  — string error identifier; null if status_code < 400
+
+Latency SLOs (authoritative; applied to all analysis unless TASK_PAYLOAD overrides):
+  p50 ≤ 120 ms
+  p95 ≤ 400 ms
+  p99 ≤ 900 ms
+
+Endpoint classification:
+  /v3/payments*        — critical path; SLO breach at p99 triggers PagerDuty alert
+  /v3/reconciliation*  — batch path; p99 SLO is relaxed to 3,000 ms
+  /v3/webhooks*        — delivery path; p99 SLO is relaxed to 2,000 ms
+  /v3/admin*           — internal only; excluded from SLO calculations
+  /health*             — excluded from all analysis
+
+Pipeline invariants:
+  - All analysis is performed on a single pre-aggregated log window per invocation
+  - Log windows are 1-hour aligned to UTC hour boundaries
+  - Each invocation receives a summary table (pre-computed percentiles and counts), not raw logs
+  - The model does not have access to raw log lines or individual request records
+###END:IMMUTABLE_CONTEXT###
+
+###ICS:CAPABILITY_DECLARATION###
+ALLOW   latency percentile analysis against declared SLOs
+ALLOW   endpoint-level aggregation and ranking by latency or error rate
+ALLOW   region-level comparison of latency distributions
+ALLOW   identification of error_code patterns correlated with latency elevation
+DENY    output of individual caller_id values in any form (raw, hashed, or enumerated)
+DENY    output of individual request_id values
+DENY    SLO threshold modification without explicit TASK_PAYLOAD override citing this directive
+DENY    analysis of /health or /v3/admin endpoints
+REQUIRE explicit SLO verdict (PASS / BREACH / DEGRADED) for each endpoint group analysed
+REQUIRE region breakdown when latency variance across regions exceeds 20%
+REQUIRE flagging of any p99 breach on /v3/payments* as CRITICAL regardless of breach magnitude
+###END:CAPABILITY_DECLARATION###
+
+###ICS:SESSION_STATE###
+[2025-02-19T09:00Z] Analysis window: 2025-02-19T08:00Z–09:00Z
+[2025-02-19T09:00Z] Regions active in window: us-east-1, eu-west-1
+[2025-02-19T09:01Z] Pre-aggregated summary received: 47,320 requests across 6 endpoint groups
+[2025-02-19T09:02Z] Prior finding (08:00 window): eu-west-1 p99 elevated on /v3/payments (712 ms, within SLO)
+###END:SESSION_STATE###
+
+###ICS:TASK_PAYLOAD###
+Analyse the 08:00–09:00 UTC summary for SLO compliance.
+
+Pre-aggregated summary:
+  endpoint_group        region       count   p50_ms  p95_ms  p99_ms  error_rate
+  /v3/payments          us-east-1    18,441  98      310     620     0.12%
+  /v3/payments          eu-west-1     9,204  114     388     941     0.31%
+  /v3/reconciliation    us-east-1     6,112  240     980    2,140    0.08%
+  /v3/webhooks          us-east-1     7,830  88      270     560     1.44%
+  /v3/webhooks          eu-west-1     3,901  101     310     688     1.67%
+  /v3/admin             us-east-1     1,832  45       90     180     0.00%
+
+Identify any SLO breaches, flag whether the eu-west-1 /v3/payments elevation is worsening
+relative to the prior window, and note whether the /v3/webhooks error rate warrants escalation.
+###END:TASK_PAYLOAD###
+
+###ICS:OUTPUT_CONTRACT###
+format:     JSON
+schema: {
+  "window": "string",
+  "endpoint_verdicts": [
+    {
+      "endpoint_group":  "string",
+      "region":          "string",
+      "slo_verdict":     "PASS" | "BREACH" | "DEGRADED",
+      "breach_level":    "CRITICAL" | "HIGH" | "MEDIUM" | null,
+      "p99_ms":          "number",
+      "slo_p99_ms":      "number",
+      "notes":           "string"
+    }
+  ],
+  "region_variance_flagged": "boolean",
+  "escalation_required":     "boolean",
+  "escalation_reason":       "string | null"
+}
+variance:   "breach_level" MUST be null when "slo_verdict" is PASS;
+            "breach_level" MUST be "CRITICAL" for any /v3/payments* p99 breach;
+            "escalation_reason" MUST be null when "escalation_required" is false;
+            /v3/admin results MUST NOT appear in "endpoint_verdicts"
+on_failure: Return { "status": "error", "reason": "<single-sentence description>" }
+###END:OUTPUT_CONTRACT###
