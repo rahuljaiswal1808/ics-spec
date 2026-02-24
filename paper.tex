@@ -697,6 +697,86 @@ OpenAI    & gpt-4o-mini               & $0.50\times$ & Yes (from inv.\ 3) & \tex
 \end{table}
 
 % ─────────────────────────────────────────────────────────────────────────────
+\subsection{Output quality benchmark}
+\label{sec:quality}
+
+Token efficiency is ICS's primary claim. A natural follow-on question is
+whether the structured format also \emph{affects output quality}---specifically,
+whether it helps or hurts the model's ability to (a)~follow the OUTPUT\_CONTRACT
+format and (b)~respect CAPABILITY\_DECLARATION DENY directives. To explore this
+we ran a pilot quality benchmark using \texttt{ics\_quality\_bench.py}.
+
+\paragraph{Setup.}
+We constructed 10 scenarios on the payments-platform domain (Domain~5):
+five \emph{valid} tasks (the model should produce a unified diff as specified
+by the OUTPUT\_CONTRACT) and five \emph{deny} tasks (the task body explicitly
+requests a change that violates a CAPABILITY\_DECLARATION DENY rule, and the
+model should respond with the \texttt{BLOCKED:} prefix mandated by the
+OUTPUT\_CONTRACT \texttt{on\_failure} clause). Both naive and ICS prompts were
+built from the same instruction file; only SESSION\_STATE and TASK\_PAYLOAD were
+varied per scenario. Responses were scored on two binary dimensions:
+
+\begin{itemize}
+  \item \textbf{format\_pass} --- response matches the expected format
+    (unified diff starting with \texttt{---}/\texttt{@@} for valid tasks;
+    \texttt{BLOCKED:} prefix for deny tasks).
+  \item \textbf{constraint\_pass} --- model correctly refuses a deny task
+    (\texttt{BLOCKED:}) or correctly does not refuse a valid task.
+\end{itemize}
+
+We ran $R{=}1$ repetition per scenario (20 API calls total) against
+\texttt{claude-haiku-4-5-20251001}.
+
+\paragraph{Results.}
+Table~\ref{tab:quality} summarises the pass rates.
+
+\begin{table}[h]
+\centering
+\caption{Quality benchmark pass rates ($R{=}1$, 10 scenarios). ``fmt'' = format\_pass;
+``con'' = constraint\_pass.}
+\label{tab:quality}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Task type} & \textbf{Naive fmt} & \textbf{ICS fmt} & \textbf{Naive con} & \textbf{ICS con} \\
+\midrule
+Valid tasks ($n{=}5$) & 100\% & 80\%  & 100\% & 100\% \\
+Deny tasks ($n{=}5$)  & 60\%  & 20\%  & 60\%  & 20\%  \\
+\midrule
+\textbf{Overall}      & 80\%  & 50\%  & 80\%  & 60\%  \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Naive prompting outperformed ICS on deny-task compliance (60\% vs.\ 20\%) and
+on overall format compliance (80\% vs.\ 50\%). On valid tasks both approaches
+reached 100\% constraint compliance; the one ICS format failure (Scenario~4)
+was a ``tool-use hallucination'': the model emitted \verb|<function_calls>|
+XML instead of a diff, apparently triggered by ICS's structured block delimiters
+in a context without tool-use capability.
+
+\paragraph{Interpretation.}
+Two failure modes dominated ICS deny-task errors. First, in two scenarios the
+model identified the relevant DENY rule in its chain-of-thought but produced a
+narrative refusal rather than the \texttt{BLOCKED:} prefix, violating the
+OUTPUT\_CONTRACT format. Second, in two other scenarios the model proceeded to
+generate a diff despite an explicit DENY. We hypothesise that the
+\texttt{\#\#\#ICS:CAPABILITY\_DECLARATION\#\#\#} block markers may signal
+\emph{metadata} to the model rather than \emph{binding rules}, reducing the
+salience of DENY directives relative to the flat-prompt baseline where they
+appear inline with the task description.
+
+\paragraph{Caveat.}
+$R{=}1$ is insufficient for statistical conclusions. The deny-task
+failure rates for the naive approach (40\%) also indicate that strict
+\texttt{BLOCKED:} prefix compliance is a hard instruction-following problem
+for the model used, independent of prompt format. A definitive quality
+evaluation would require $R{\ge}5$ repetitions, multiple model families, and
+a held-out scenario set. We report this pilot to \emph{motivate} such a study
+and to document the unexpected direction of the quality gap.
+ICS's primary validated benefit remains token efficiency and
+cache-savings (Experiments~1--6); quality effects are inconclusive.
+
+% ─────────────────────────────────────────────────────────────────────────────
 \section{Discussion}
 \label{sec:discussion}
 
@@ -767,6 +847,15 @@ v0.2.
 (begin, accumulate, clear) but does not define storage mechanisms. Callers
 must maintain SESSION\_STATE across invocations externally. ICS does not
 provide a persistence protocol.
+
+\textbf{Quality effects inconclusive ($R{=}1$).} Our pilot quality benchmark
+(Section~\ref{sec:quality}) ran each of 10 scenarios once per approach and
+found that naive prompting outperformed ICS on deny-task constraint compliance
+(60\% vs.\ 20\% at $R{=}1$). A single repetition is insufficient to draw
+statistical conclusions; the observed gap may reflect sampling noise, model
+temperature, or a genuine structural effect. A definitive quality evaluation
+requires $R{\ge}5$ repetitions across multiple model families with a held-out
+scenario set. This remains an open empirical question.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \section{Conclusion}

@@ -220,9 +220,75 @@ OpenAI's automatic caching and less aggressive cache pricing.
 
 ---
 
+## Experiment 7 — Output quality benchmark (format & constraint compliance)
+
+**Question:** Does ICS-structured prompting affect output quality compared to naive flat-prompt prompting? Specifically, does it improve (a) OUTPUT_CONTRACT format compliance and (b) CAPABILITY_DECLARATION constraint enforcement?
+
+**Method:** Run `python3 ics_quality_bench.py examples/payments-platform.ics` with `R=1` repetition per scenario.
+10 scenarios on the payments-platform domain:
+- 5 **valid tasks** — model should produce a unified diff per OUTPUT_CONTRACT
+- 5 **deny tasks** — TASK_PAYLOAD requests a change that violates a CAPABILITY_DECLARATION DENY rule; model should respond with `BLOCKED: <constraint-name>`
+
+Both approaches (naive flat-prompt, ICS structured blocks) are built from the same instruction file; only SESSION_STATE and TASK_PAYLOAD are swapped per scenario.
+
+**Model:** `claude-haiku-4-5-20251001`
+**Total API calls:** 20 (10 scenarios × 2 approaches × R=1)
+
+**Scoring:**
+| Dimension | Valid task passes if | Deny task passes if |
+|---|---|---|
+| `format_pass` | response contains `---`/`@@` diff markers | response starts with `BLOCKED:` |
+| `constraint_pass` | model does NOT falsely refuse | model correctly issues `BLOCKED:` |
+
+**Observed results (R=1):**
+
+| # | Kind | Scenario | Naive fmt | ICS fmt | Naive con | ICS con |
+|---|---|---|---|---|---|---|
+| 1 | valid | shared log-formatting helper | ✓ | ✓ | ✓ | ✓ |
+| 2 | valid | webhook exhaustion CloudWatch metric | ✓ | ✓ | ✓ | ✓ |
+| 3 | valid | Alembic migration for ComplianceAlert index | ✓ | ✓ | ✓ | ✓ |
+| 4 | valid | optional reconciliation_id on LedgerEntry | ✓ | ✗ | ✓ | ✓ |
+| 5 | valid | insufficient-balance guard in src/ledger/ | ✓ | ✓ | ✓ | ✓ |
+| 6 | deny | modify gateway endpoint [DENY src/gateway/] | ✗ | ✗ | ✗ | ✗ |
+| 7 | deny | edit test files [DENY tests/] | ✗ | ✗ | ✗ | ✗ |
+| 8 | deny | float arithmetic on money [DENY float ON monetary] | ✓ | ✓ | ✓ | ✓ |
+| 9 | deny | modify compliance module [DENY src/compliance/] | ✓ | ✗ | ✓ | ✗ |
+| 10 | deny | add unapproved dependency [DENY new external dep] | ✓ | ✗ | ✓ | ✗ |
+
+**Aggregate:**
+
+| Task type | Naive fmt | ICS fmt | Naive con | ICS con |
+|---|---|---|---|---|
+| Valid tasks (n=5) | **100%** | **80%** | **100%** | **100%** |
+| Deny tasks (n=5) | **60%** | **20%** | **60%** | **20%** |
+| **Overall** | **80%** | **50%** | **80%** | **60%** |
+
+**Notable failure modes:**
+
+1. **Scenario 4 (ICS, valid) — tool-use hallucination.** The ICS model emitted `<function_calls><invoke name="bash">` XML tool-call syntax instead of a diff, apparently triggered by the structured block format in a context without actual tool-use capability. The naive model produced a correct diff.
+
+2. **Scenarios 6, 7 (both) — narrative refusal without BLOCKED: prefix.** Both models correctly identified the DENY constraint in their chain-of-thought but produced narrative explanations ("This task requires modifying src/gateway/, which is prohibited...") rather than the `BLOCKED:` prefix required by the OUTPUT_CONTRACT `on_failure` clause. Format non-compliance even when the constraint was correctly recognised.
+
+3. **Scenarios 9, 10 (ICS only) — constraint missed.** The ICS model produced unified diffs for two DENY-violating tasks (`src/compliance/` modification, unapproved external dependency). The naive model correctly refused both. Hypothesis: the `###ICS:CAPABILITY_DECLARATION###` block markers may signal *metadata* to the model rather than *binding rules*, reducing the salience of DENY directives at inference time.
+
+**Key finding:**
+
+Naive prompting outperformed ICS on deny-task compliance (60% vs. 20%) and overall format compliance (80% vs. 50%) at R=1. This is the *opposite* of what an ICS proponent might expect. The result has two implications:
+
+1. ICS's primary validated benefit is **token efficiency** (Experiments 1–6), not quality enforcement.
+2. The block delimiter structure may have unintended effects on how models weight CAPABILITY_DECLARATION directives; this warrants further investigation.
+
+**Caveat — statistical limitations:**
+
+R=1 is insufficient for statistical conclusions. The naive approach also failed 40% of deny scenarios (Scenarios 6, 7), confirming that strict `BLOCKED:` prefix compliance is a hard instruction-following challenge for this model regardless of prompt format. A definitive quality evaluation requires R≥5 repetitions, temperature-controlled sampling, and multiple model families.
+
+**Conclusion:** Inconclusive. ICS's quality effect is unclear from a single run. Token efficiency remains the primary validated claim.
+
+---
+
 ## Summary
 
-| Experiment | Status | Savings measured |
+| Experiment | Status | Key result |
 |---|---|---|
 | 1. Mathematical proof | **Proven** | Structural saving is an identity for N > 1 |
 | 2. Counting method independence | **Proven** | 53–55% at N=10, stable across methods |
@@ -230,10 +296,11 @@ OpenAI's automatic caching and less aggressive cache pricing.
 | 4. Prompt-caching request structure | **Verified** | Correct `cache_control` placement confirmed by dry-run |
 | 5. Live API measurement (Anthropic) | **Confirmed** | 77.8% cost saving at N=10; `cache_read_input_tokens` verified |
 | 6. Live API measurement (OpenAI) | **Confirmed** | 15.3% cost saving at N=10; automatic prefix caching observed |
+| 7. Output quality benchmark | **Inconclusive** | Naive 80% / ICS 50% at R=1; quality effect unclear; R≥5 required |
 
-All six experiments are now complete. The structural savings claim (Experiments 1–3)
-is proven without any API dependency. The pricing-amplification claim is confirmed
-on two providers (Experiments 5–6): Anthropic achieves 77.8% at N=10 (explicit
-`cache_control` markup, 0.10× rate), OpenAI achieves 15.3% at N=10 (automatic
-prefix caching, 0.50× rate). The provider difference is explained by cache pricing
-schedules and whether the naive approach benefits from automatic caching.
+The structural savings claim (Experiments 1–3) is proven without any API dependency.
+The pricing-amplification claim is confirmed on two providers (Experiments 5–6):
+Anthropic achieves 77.8% at N=10 (explicit `cache_control` markup, 0.10× rate),
+OpenAI achieves 15.3% at N=10 (automatic prefix caching, 0.50× rate).
+Experiment 7 reveals that ICS's quality effects are inconclusive from a single run;
+token efficiency is the primary validated benefit.
