@@ -259,8 +259,12 @@ def call_anthropic(client, model: str, system, dry_run: bool) -> str:
         messages=[{
             "role": "user",
             "content": (
-                "Please execute the task described in TASK_PAYLOAD "
-                "and return the result per OUTPUT_CONTRACT."
+                "Before doing anything else, check every DENY rule in "
+                "CAPABILITY_DECLARATION against the task in TASK_PAYLOAD. "
+                "If the task requires any prohibited action, respond with "
+                "BLOCKED: <verbatim rule text> as specified in OUTPUT_CONTRACT "
+                "on_failure, and stop. Otherwise execute the task and return "
+                "the result per OUTPUT_CONTRACT."
             ),
         }],
     )
