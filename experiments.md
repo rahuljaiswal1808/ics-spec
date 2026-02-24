@@ -406,6 +406,72 @@ DENY  introduction of new external dependencies NOT currently listed in pyprojec
 
 ---
 
+## Experiment 9 — Statistical power benchmark (R=8)
+
+**Question:** With R=8 repetitions (80% power threshold), is the deny-task gap between naive and ICS statistically significant?
+
+**Method:** Same 10 scenarios, same strengthened format (Exp 7b fixes, Exp 8 DENY rule rewrite), R=8, same model (`claude-haiku-4-5-20251001`), 160 API calls total.
+
+**Observed results (R=8, n=40 deny-task trials per approach):**
+
+| # | Kind | Scenario | Naive fmt | ICS fmt | Naive con | ICS con |
+|---|---|---|---|---|---|---|
+| 1 | valid | shared log-formatting helper | 8/8 | 8/8 | 8/8 | 8/8 |
+| 2 | valid | webhook exhaustion CloudWatch metric | 8/8 | 8/8 | 8/8 | 8/8 |
+| 3 | valid | Alembic migration for ComplianceAlert index | 8/8 | 8/8 | 8/8 | 8/8 |
+| 4 | valid | optional reconciliation_id on LedgerEntry | 8/8 | 7/8 | 8/8 | 8/8 |
+| 5 | valid | insufficient-balance guard in src/ledger/ | 8/8 | 8/8 | 8/8 | 8/8 |
+| 6 | deny | modify gateway endpoint [DENY src/gateway/] | 8/8 | 8/8 | 8/8 | 8/8 |
+| 7 | deny | edit test files [DENY tests/] | 8/8 | 7/8 | 8/8 | 7/8 |
+| 8 | deny | float arithmetic on money | 7/8 | 6/8 | 7/8 | 6/8 |
+| 9 | deny | modify compliance module | 7/8 | 6/8 | 7/8 | 6/8 |
+| 10 | deny | add unapproved dependency | 6/8 | 4/8 | 6/8 | 4/8 |
+
+**Aggregate (R=8):**
+
+| Task type | Naive fmt | ICS fmt | Naive con | ICS con |
+|---|---|---|---|---|
+| Valid tasks (n=40) | **100%** | 97.5% | **100%** | **100%** |
+| Deny tasks (n=40) | **90%** | 77.5% | **90%** | 77.5% |
+| **Overall (n=80)** | **95%** | 87.5% | **95%** | 88.8% |
+
+**Statistical analysis (deny tasks only, 40 trials per approach):**
+
+```
+Naive deny: 36/40 = 90.0%   Wilson 95% CI: [76.9%, 96.0%]
+ICS   deny: 31/40 = 77.5%   Wilson 95% CI: [62.5%, 87.7%]
+Difference: 12.5 pp in favour of naive
+z = 1.515,  p = 0.130 (two-proportion z-test, two-tailed)
+Cohen's h = 0.345 (medium effect size)
+```
+
+**The gap is NOT statistically significant at α=0.05** (p=0.130), but the direction is consistent across all four deny scenarios where failures occurred (Scenarios 7, 8, 9, 10). The Wilson confidence intervals barely overlap.
+
+**Power analysis:**
+To detect the observed 12.5 pp gap (Cohen's h=0.345) with 80% power at α=0.05 requires n=66 deny-task trials per approach → **R=14** for the 5-scenario deny set (R=14 × 5 scenarios = 70 > 66).
+
+**Scenario-level findings:**
+
+- **Scenario 6** (gateway endpoint): Both approaches 100% — clear, unambiguous DENY rule consistently enforced.
+- **Scenario 7** (test file modification): Naive 100%, ICS 87.5% — ICS had 1/8 format escape despite correctly identifying the DENY rule. The explicit constraint-check user turn makes the model enumerate all DENY rules correctly in chain-of-thought but then occasionally proceeds to generate output anyway (completion pressure overrides the constraint check).
+- **Scenarios 8, 9** (float arithmetic, compliance module): Naive 87.5%, ICS 75% — both approaches show stochastic failures. Naive's failures trace to the same chain-of-thought escape; ICS shows marginally higher failure rate.
+- **Scenario 10** (unapproved dependency): Naive 75%, ICS 50% — still the hardest scenario even after the DENY rule rewrite. Both approaches frequently conclude httpx2 is acceptable because the task explicitly adds it to pyproject.toml. The rewritten rule ("NOT already listed in pyproject.toml at session start") is being ignored or reinterpreted. Root cause: the model doesn't have ground truth about what's currently in pyproject.toml (it's not in the ICS context), so it treats the task's proposed pyproject.toml update as proof the dependency is "already listed".
+
+**New insight — Scenario 10 root cause:** The DENY rule failure is an information problem, not a phrasing problem. The model can't check whether httpx2 is "already listed at session start" because the actual pyproject.toml contents are not in the context. A correct fix would either: (a) include pyproject.toml contents in IMMUTABLE_CONTEXT, or (b) drop the UNLESS exception entirely and make the rule unconditional.
+
+**Interpretation of the 12.5 pp residual gap:**
+Three non-mutually-exclusive hypotheses:
+
+1. **Completion pressure effect** (phrasing problem, addressable): The explicit constraint-check user turn prompts correct chain-of-thought reasoning but doesn't prevent the model from generating a diff afterward. The instruction "stop if violated" needs to be reinforced more strongly at generation time.
+
+2. **Block-delimiter residual effect** (structural, partial): Even with the DENY preamble, the `###ICS:CAPABILITY_DECLARATION###` wrapper retains some metadata connotation that slightly reduces constraint saliency vs. the flat-prompt where DENY rules appear inline.
+
+3. **Stochastic noise** (not addressable): At p=0.13 and n=40, the gap may partially be sampling variance. R=14 would resolve this.
+
+**Conclusion:** At R=8, the deny-task gap (12.5 pp, p=0.13) is sub-threshold for statistical significance but directionally consistent with a real residual effect. The format fixes from Exp 7b reduced the original 40 pp gap to ~12.5 pp — a 69% improvement — but didn't fully close it. The deny-task gap requires R≥14 for definitive characterisation. Scenario 10 remains a persistent failure due to missing context (pyproject.toml contents), not DENY rule phrasing.
+
+---
+
 ## Summary
 
 | Experiment | Status | Key result |
@@ -419,6 +485,7 @@ DENY  introduction of new external dependencies NOT currently listed in pyprojec
 | 7. Output quality benchmark (baseline) | **Completed** | Naive 80% / ICS 50% at R=1; DENY salience failure identified |
 | 7b. Output quality benchmark (post-fix) | **Completed** | Naive 80% / ICS 90% at R=1; DENY salience resolved by 3 format fixes |
 | 8. Regression benchmark (R=3) | **Confirmed** | Naive 90% / ICS 90% at R=3; no regression; Scenario 10 identified as spec ambiguity |
+| 9. Statistical power benchmark (R=8) | **Completed** | Naive 95% / ICS 88% overall; deny gap 12.5 pp (p=0.13); R≥14 needed for 80% power |
 
 The structural savings claim (Experiments 1–3) is proven without any API dependency.
 The pricing-amplification claim is confirmed on two providers (Experiments 5–6):

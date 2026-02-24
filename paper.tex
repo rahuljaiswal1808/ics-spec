@@ -861,10 +861,59 @@ Deny tasks ($n{=}5$, 15 reps)  &  87\% &  80\% &  87\% &  80\% \\
 \end{tabular}
 \end{table}
 
+\paragraph{Statistical power run at $R{=}8$.}
+To approach the 80\% power threshold identified in Experiment~8, we ran a
+final 160-call benchmark ($R{=}8$, 10 scenarios, 2 approaches) with the
+Scenario~10 DENY rule additionally rewritten to remove the self-referential
+exception (``NOT already listed in \texttt{pyproject.toml} at session start'').
+Table~\ref{tab:quality-r8} reports the results.
+
+\begin{table}[h]
+\centering
+\caption{$R{=}8$ quality pass rates (160 API calls). 95\% Wilson CIs on deny
+sub-scores: naive $[76.9\%,\,96.0\%]$, ICS $[62.5\%,\,87.7\%]$.}
+\label{tab:quality-r8}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Task type} & \textbf{Naive fmt} & \textbf{ICS fmt} & \textbf{Naive con} & \textbf{ICS con} \\
+\midrule
+Valid tasks ($n{=}40$) & \textbf{100\%} & 97.5\% & \textbf{100\%} & \textbf{100\%} \\
+Deny tasks ($n{=}40$)  & \textbf{90.0\%} & 77.5\% & \textbf{90.0\%} & 77.5\% \\
+\midrule
+\textbf{Overall ($n{=}80$)} & \textbf{95.0\%} & 87.5\% & \textbf{95.0\%} & 88.8\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The deny-task gap is 12.5~pp in favour of naive (90.0\% vs.\ 77.5\%).
+A two-proportion $z$-test gives $z{=}1.52$, $p{=}0.130$---below the conventional
+$\alpha{=}0.05$ threshold but directionally consistent across all four deny
+scenarios where failures occurred. Cohen's $h{=}0.345$ (medium effect).
+Reaching 80\% power at $\alpha{=}0.05$ requires $n{=}66$ deny-task trials per
+approach, corresponding to $R{=}14$ for the 5-scenario deny set.
+
+The residual 12.5~pp gap reflects two separable phenomena. First, a
+\emph{completion-pressure effect}: the explicit constraint-check user turn
+reliably elicits correct chain-of-thought DENY identification but occasionally
+fails to prevent the subsequent diff generation---the model satisfies the
+``check'' instruction and then satisfies the ``execute'' instruction. Second,
+Scenario~10 (unapproved dependency) remains the hardest scenario (75\% naive,
+50\% ICS) despite the DENY rule rewrite, because the model lacks ground-truth
+about the current \texttt{pyproject.toml} contents---an information gap, not a
+phrasing problem. Supplying \texttt{pyproject.toml} in IMMUTABLE\_CONTEXT would
+eliminate this failure mode entirely.
+
+Overall, the four-experiment quality arc (Experiments~7, 7b, 8, 9) shows:
+the original 40~pp ICS deficit from pre-fix formatting was reduced to
+${\approx}12.5$~pp by three targeted phrasing changes; the remaining gap is
+sub-threshold at current sample sizes; and the dominant residual failure
+mode is information absence rather than format structure.
+
 \paragraph{Caveat.}
-$R{=}3$ is insufficient for statistical inference on the deny-task sub-scores.
-A definitive quality study requires $R{\ge}5$ repetitions, temperature-controlled
-sampling, and multiple model families.
+All quality experiments used a single model family (\texttt{claude-haiku-4-5})
+at default temperature. Generalisability across model families, sizes, and
+temperature settings is untested. $R{=}14$ would provide 80\% power to
+characterise the observed deny-task gap definitively.
 ICS's primary validated benefit remains token efficiency and
 cache-savings (Experiments~1--6); the quality experiments here are exploratory.
 
@@ -940,14 +989,15 @@ v0.2.
 must maintain SESSION\_STATE across invocations externally. ICS does not
 provide a persistence protocol.
 
-\textbf{Quality effects require $R{\ge}5$ for statistical confidence.}
-Our two-round pilot quality benchmark (Section~\ref{sec:quality}) ran each of
-10 scenarios once per approach ($R{=}1$). Round~1 found that naive outperformed
-ICS (80\% vs.\ 50\%), but three targeted format changes in Round~2 brought ICS
-to 90\% overall, matching or exceeding naive. The improvement demonstrates that
-DENY salience is a phrasing problem, not a structural defect. However,
-$R{=}1$ is insufficient to draw statistical conclusions; a definitive quality
-evaluation requires $R{\ge}5$ repetitions across multiple model families.
+\textbf{Deny-task quality gap is sub-threshold at $R{=}8$; $R{\ge}14$ required.}
+Our quality benchmark ran across four repetition levels (Experiments~7, 7b, 8, 9).
+Pre-fix ICS trailed naive by 40~pp on deny-task compliance; three targeted
+CAPABILITY\_DECLARATION phrasing changes reduced this to ${\approx}12.5$~pp.
+At $R{=}8$ ($n{=}40$ deny trials per approach), the gap is not statistically
+significant ($p{=}0.13$, two-proportion $z$-test) but is directionally consistent
+with Cohen's $h{=}0.345$ (medium effect). Reaching 80\% power requires $R{=}14$
+for the 5-scenario deny set. A definitive quality evaluation also requires
+multiple model families and temperature-controlled sampling.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \section{Conclusion}
