@@ -40,8 +40,7 @@ Moderation pipeline context:
 ALLOW   analysis of submitted content against declared policy categories
 ALLOW   citation of specific policy category and severity definition for each finding
 ALLOW   flagging of jurisdictional override applicability
-DENY    generation of content that reproduces or paraphrases violating material beyond what is
-        necessary to identify the specific policy violation
+DENY    generation of content that reproduces or paraphrases violating material beyond the minimum necessary to identify the specific policy violation
 DENY    application of policy versions other than 2025-01-15
 DENY    severity downgrade below MEDIUM for designated high-risk topic misinformation
 DENY    CLEAR classification for content that matches any named example in IMMUTABLE_CONTEXT
