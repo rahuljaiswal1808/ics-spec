@@ -1,0 +1,169 @@
+% ── Structured / templated prompting ──────────────────────────────────────────
+
+@inproceedings{bach2022promptsource,
+  title     = {{PromptSource}: An Integrated Development Environment and Repository
+               for Natural Language Prompts},
+  author    = {Bach, Stephen and Sanh, Victor and Yong, Zheng-Xin and Webson,
+               Albert and Raffel, Colin and Nayak, Nihal V. and Sharma, Abheesht
+               and Kim, Taewoon and Bari, M Saiful and F{\'e}vry, Thibault and
+               others},
+  booktitle = {Proceedings of the 60th Annual Meeting of the Association for
+               Computational Linguistics: System Demonstrations},
+  pages     = {93--104},
+  year      = {2022},
+  publisher = {Association for Computational Linguistics},
+}
+
+@inproceedings{sanh2022multitask,
+  title     = {Multitask Prompted Training Enables Zero-Shot Task Generalization},
+  author    = {Sanh, Victor and Webson, Albert and Raffel, Colin and Bach, Stephen
+               and Sutawika, Lintang and Alyafeai, Zaid and Chaffin, Antoine and
+               Stiegler, Arnaud and Raja, Arun and Dey, Manan and others},
+  booktitle = {International Conference on Learning Representations},
+  year      = {2022},
+}
+
+@article{khattab2023dspy,
+  title   = {{DSPy}: Compiling Declarative Language Model Calls into
+             Self-Improving Pipelines},
+  author  = {Khattab, Omar and Singhvi, Arnav and Maheshwari, Paridhi and
+             Zhang, Zhiyuan and Shrivastava, Keshav and Sharma, Saiful and
+             Jain, Rahul and Thakur, Aditi and Bhatt, Vedant and Zhong, Victor
+             and others},
+  journal = {arXiv preprint arXiv:2310.03714},
+  year    = {2023},
+}
+
+@misc{beurer2023lmql,
+  title        = {{LMQL}: A Query Language for Language Model Interaction},
+  author       = {Beurer-Kellner, Luca and Fischer, Marc and Vechev, Martin},
+  howpublished = {arXiv preprint arXiv:2212.06094},
+  year         = {2023},
+}
+
+@misc{guidance2023,
+  title        = {Guidance: A Guidance Language for Controlling Large Language
+                  Models},
+  author       = {{Guidance-AI contributors}},
+  howpublished = {\url{https://github.com/guidance-ai/guidance}},
+  year         = {2023},
+}
+
+@misc{typechat2023,
+  title        = {{TypeChat}: Getting Structured Output from Language Models},
+  author       = {Sweeney, Tim and Bierman, Gavin and others},
+  howpublished = {Microsoft Research Blog,
+                  \url{https://microsoft.github.io/TypeChat/}},
+  year         = {2023},
+}
+
+% ── Chain-of-thought and instruction tuning ───────────────────────────────────
+
+@article{wei2022chain,
+  title   = {Chain-of-Thought Prompting Elicits Reasoning in Large Language Models},
+  author  = {Wei, Jason and Wang, Xuezhi and Schuurmans, Dale and Bosma, Maarten
+             and Ichter, Brian and Xia, Fei and Chi, Ed and Le, Quoc and Zhou,
+             Denny},
+  journal = {Advances in Neural Information Processing Systems},
+  volume  = {35},
+  pages   = {24824--24837},
+  year    = {2022},
+}
+
+@article{kojima2022zero,
+  title   = {Large Language Models are Zero-Shot Reasoners},
+  author  = {Kojima, Takeshi and Gu, Shixiang Shane and Reid, Machel and
+             Matsuo, Yutaka and Iwasawa, Yusuke},
+  journal = {Advances in Neural Information Processing Systems},
+  volume  = {35},
+  pages   = {22199--22213},
+  year    = {2022},
+}
+
+@article{wang2022self,
+  title   = {Self-Consistency Improves Chain of Thought Reasoning in Language
+             Models},
+  author  = {Wang, Xuezhi and Wei, Jason and Schuurmans, Dale and Le, Quoc and
+             Chi, Ed and Narang, Sharan and Chowdhery, Aakanksha and Zhou, Denny},
+  journal = {arXiv preprint arXiv:2203.11171},
+  year    = {2022},
+}
+
+@article{ouyang2022training,
+  title   = {Training Language Models to Follow Instructions with Human
+             Feedback},
+  author  = {Ouyang, Long and Wu, Jeff and Jiang, Xu and Almeida, Diogo and
+             Wainwright, Carroll and Mishkin, Pamela and Zhang, Chong and
+             Agarwal, Sandhini and Slama, Katarina and Ray, Alex and others},
+  journal = {Advances in Neural Information Processing Systems},
+  volume  = {35},
+  pages   = {27730--27744},
+  year    = {2022},
+}
+
+@inproceedings{wei2022finetuned,
+  title     = {Finetuned Language Models Are Zero-Shot Learners},
+  author    = {Wei, Jason and Bosma, Maarten and Zhao, Vincent Y. and Guu, Kelvin
+               and Yu, Adams Wei and Lester, Brian and Du, Nan and Dai, Andrew M.
+               and Le, Quoc V.},
+  booktitle = {International Conference on Learning Representations},
+  year      = {2022},
+}
+
+% ── Memory and context management ─────────────────────────────────────────────
+
+@article{packer2023memgpt,
+  title   = {{MemGPT}: Towards {LLMs} as Operating Systems},
+  author  = {Packer, Charles and Wooders, Sarah and Lin, Kevin and Fang, Vivian
+             and Patil, Shishir G. and Stoica, Ion and Gonzalez, Joseph E.},
+  journal = {arXiv preprint arXiv:2310.08560},
+  year    = {2023},
+}
+
+@inproceedings{lewis2020rag,
+  title     = {Retrieval-Augmented Generation for Knowledge-Intensive {NLP} Tasks},
+  author    = {Lewis, Patrick and Perez, Ethan and Piktus, Aleksandra and Petroni,
+               Fabio and Karpukhin, Vladimir and Goyal, Naman and K{\"u}ttler,
+               Heinrich and Lewis, Mike and Yih, Wen-tau and Rockt{\"a}schel, Tim
+               and others},
+  booktitle = {Advances in Neural Information Processing Systems},
+  volume    = {33},
+  pages     = {9459--9474},
+  year      = {2020},
+}
+
+% ── Prompt caching and token efficiency ───────────────────────────────────────
+
+@misc{anthropic2024caching,
+  title        = {Prompt Caching},
+  author       = {{Anthropic}},
+  howpublished = {Anthropic API Documentation,
+                  \url{https://docs.anthropic.com/en/docs/build-with-claude/prompt-caching}},
+  year         = {2024},
+}
+
+@article{gim2023prompt,
+  title   = {Prompt Cache: Modular Attention Reuse for Low-Latency Inference},
+  author  = {Gim, In and Chen, Guojun and Lee, Seung-seob and Sarda, Nikhil and
+             Keutzer, Kurt and Zheng, Lianmin},
+  journal = {arXiv preprint arXiv:2311.04934},
+  year    = {2023},
+}
+
+% ── Schema-constrained decoding ───────────────────────────────────────────────
+
+@article{willard2023efficient,
+  title   = {Efficient Guided Generation for Large Language Models},
+  author  = {Willard, Brandon T. and Louf, R{\'e}mi},
+  journal = {arXiv preprint arXiv:2307.09702},
+  year    = {2023},
+}
+
+@article{geng2023grammar,
+  title   = {Grammar-Constrained Decoding for Structured {NLP} Tasks without
+             Finetuning},
+  author  = {Geng, Saibo and Josifoski, Martin and Peyrard, Maxime and West,
+             Robert},
+  journal = {arXiv preprint arXiv:2305.13971},
+  year    = {2023},
+}

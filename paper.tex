@@ -1,0 +1,645 @@
+\documentclass[11pt]{article}
+
+% ── Packages ──────────────────────────────────────────────────────────────────
+\usepackage[margin=1in]{geometry}
+\usepackage{microtype}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{graphicx}
+\usepackage{caption}
+\usepackage{subcaption}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{parskip}
+\usepackage{natbib}
+\usepackage{authblk}
+\usepackage{abstract}
+
+% ── Listing style ─────────────────────────────────────────────────────────────
+\definecolor{codebg}{RGB}{248,248,248}
+\definecolor{codeframe}{RGB}{220,220,220}
+\definecolor{kwcolor}{RGB}{0,0,180}
+\definecolor{commentcolor}{RGB}{100,100,100}
+
+\lstdefinelanguage{ICS}{
+  keywords={ALLOW,DENY,REQUIRE,WITHIN,ON,WITH,UNLESS,IF,CLEAR},
+  keywordstyle=\color{kwcolor}\bfseries,
+  comment=[l]{\#},
+  commentstyle=\color{commentcolor}\itshape,
+  stringstyle=\color{black},
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  backgroundcolor=\color{codebg},
+  rulecolor=\color{codeframe},
+  showstringspaces=false,
+  moredelim=[s][\color{kwcolor}]{"\#\#\#ICS:}{"\#\#\#},
+}
+
+\lstset{
+  basicstyle=\ttfamily\small,
+  breaklines=true,
+  frame=single,
+  backgroundcolor=\color{codebg},
+  rulecolor=\color{codeframe},
+  showstringspaces=false,
+  numbers=none,
+}
+
+% ── Hyperref setup ────────────────────────────────────────────────────────────
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!60!black,
+  citecolor=blue!60!black,
+  urlcolor=blue!60!black,
+}
+
+% ── Title ─────────────────────────────────────────────────────────────────────
+\title{\textbf{ICS: A Formal Instruction Contract Specification\\
+for Large Language Model Interfaces}\\[0.4em]
+\large Version 0.1 --- Technical Report}
+
+\author[1]{[Author Name]}
+\affil[1]{[Affiliation]}
+
+\date{\today}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\begin{document}
+\maketitle
+
+% ── Abstract ──────────────────────────────────────────────────────────────────
+\begin{abstract}
+Instructions to Large Language Models (LLMs) are typically authored as
+informal prose, resulting in recurring failure modes: implicit constraints
+that disappear across sessions, mixed-lifetime context that cannot be
+cached, ambiguous output expectations that are resolved only by repeated
+re-prompting, and prompt content that cannot be audited or validated
+programmatically. We introduce the \emph{Instruction Contract Specification}
+(ICS), a five-layer structured format that treats LLM instructions as formal
+interfaces rather than natural language requests. ICS separates instruction
+content by \emph{lifetime}: permanent context, capability declarations,
+session state, per-invocation tasks, and output contracts. This separation
+enables prompt-caching APIs to serve stable content at reduced rates. We
+provide a formal grammar for capability directives, a conformance checker, and
+empirical evaluation on a real-world B2B payments platform workload. Across
+ten API invocations on \texttt{claude-haiku-4-5-20251001}, ICS-structured
+instructions achieve a \textbf{77.8\%} reduction in effective API cost
+compared to the na\"{i}ve flat-prompt baseline, with a proven lower bound of
+55\% token savings at $N{=}10$ that is independent of model or counting
+method. ICS is model-agnostic, framework-independent, and available as an
+open specification.
+\end{abstract}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Introduction}
+\label{sec:intro}
+
+The software industry has spent decades developing discipline around
+\emph{interfaces}: API contracts, schemas, protocols, and type systems that
+make the behavior of software components explicit, auditable, and
+maintainable. These tools exist because interfaces that rely on shared
+context, informal conventions, and implied constraints do not compose and do
+not scale.
+
+LLM instructions have not received the same treatment. Instructions are
+typically written as natural language prose, structured loosely by convention,
+and stored in files with no machine-readable semantics. When a system that
+uses an LLM instruction misbehaves, diagnosing whether the fault lies in the
+model, the instruction, or the caller's interpretation of the output requires
+manual inspection. When the instruction must be reused in a new context or
+maintained by someone who was not involved in writing it, implicit assumptions
+collapse silently.
+
+This produces four failure modes that recur across real deployments:
+
+\begin{enumerate}[leftmargin=*]
+\item \textbf{Context collapse.} Long-lived facts (system invariants,
+architectural constraints) are mixed with short-lived context (session
+decisions, per-task parameters) into a single prompt block. Callers cannot
+determine what can be safely cached and what must be re-sent on every
+invocation, resulting in either unnecessary token cost or stale-context bugs.
+
+\item \textbf{Implicit constraints.} Team conventions---``never modify the
+API layer,'' ``always return amounts in minor units,'' ``assume Python
+3.11''---are documented in READMEs or exist only in the knowledge of the
+original author. When the instruction is reused or transferred, these
+constraints disappear silently.
+
+\item \textbf{Ambiguous output expectations.} Instructions describe
+\emph{what to do} without specifying what a correct result looks like.
+Output evaluation becomes subjective, failure states are undetectable by
+callers, and retry behavior is undefined.
+
+\item \textbf{Retry as a first resort.} Ambiguous instructions produce
+inconsistent outputs. The standard response is to rephrase and retry---which
+treats ambiguity as a model failure rather than an interface failure, and
+produces no durable fix.
+\end{enumerate}
+
+We argue that these failure modes share a root cause: \emph{LLM instructions
+are not treated as interfaces.} The solution is not better prompting
+intuition---it is applying the same engineering discipline to instructions
+that is already applied to APIs, schemas, and protocols.
+
+\paragraph{Contributions.} We present the \emph{Instruction Contract
+Specification} (ICS), which makes the following contributions:
+
+\begin{enumerate}[leftmargin=*]
+\item A five-layer instruction format that separates content by lifetime
+(\S\ref{sec:spec}), making stable context structurally distinct from
+per-invocation content.
+
+\item A formal directive grammar for capability declarations
+(\S\ref{sec:capgram}), replacing prose constraints with machine-verifiable
+directives.
+
+\item A required output contract with enumerated fields, eliminating
+ambiguous output expectations and undefined failure states (\S\ref{sec:oc}).
+
+\item Empirical evidence that ICS's lifetime separation enables prompt-caching
+APIs to reduce effective API cost by 77.8\% on a real-world workload, with a
+proven token-saving lower bound that holds for any conformant instruction
+(\S\ref{sec:eval}).
+
+\item An open specification, reference validator, and worked examples across
+five real-world domains (\S\ref{sec:examples}).
+\end{enumerate}
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Related Work}
+\label{sec:related}
+
+\paragraph{Prompt templates and structured prompting.}
+Early systematic approaches to prompting introduced reusable templates and
+labeling schemes~\citep{bach2022promptsource,sanh2022multitask}. DSPy
+\citep{khattab2023dspy} compiles natural-language signatures into optimized
+prompt programs, treating prompt construction as a differentiable pipeline.
+LMQL~\citep{beurer2023lmql} and Guidance~\citep{guidance2023} add
+programming-language constructs (loops, conditionals, type constraints) to
+prompt authoring. TypeChat~\citep{typechat2023} uses TypeScript type
+definitions to constrain LLM outputs to well-typed JSON. ICS differs from all
+of these: it does not optimize prompts, does not compile them, and does not
+constrain \emph{model decoding}. Instead, ICS defines a \emph{structural
+contract} for the \emph{instruction itself}---what the caller commits to
+providing and how it is organized---independent of the underlying model or
+inference engine.
+
+\paragraph{Chain-of-thought and instruction tuning.}
+Chain-of-thought prompting~\citep{wei2022chain} and related
+techniques~\citep{kojima2022zero,wang2022self} elicit multi-step reasoning
+by structuring the prompt's \emph{content}. Instruction
+tuning~\citep{ouyang2022training,wei2022finetuned} aligns model behavior with
+natural-language instructions at training time. These methods address how
+models \emph{reason}; ICS addresses how instructions are \emph{structured and
+validated}. The two concerns are orthogonal: an ICS-compliant instruction can
+include chain-of-thought examples in its TASK\_PAYLOAD layer.
+
+\paragraph{Memory and context management.}
+MemGPT~\citep{packer2023memgpt} introduces a hierarchical memory system that
+pages context in and out of an LLM's context window at runtime, enabling
+unbounded effective context. Retrieval-augmented generation
+(RAG)~\citep{lewis2020rag} injects retrieved documents into the prompt at
+query time. Both address \emph{what content} the model sees; ICS addresses
+\emph{how that content is organized and classified by lifetime}. The two
+approaches are complementary: a RAG system could use ICS to separate
+retrieved content (TASK\_PAYLOAD) from stable system context
+(IMMUTABLE\_CONTEXT).
+
+\paragraph{Prompt caching and token efficiency.}
+Anthropic's prompt caching API~\citep{anthropic2024caching} and analogous
+mechanisms in other providers allow prefill KV-cache reuse for stable prompt
+prefixes. Gim et al.~\citep{gim2023prompt} propose prompt cache architectures
+for shared prefix reuse across requests. ICS's lifetime-separation design
+directly enables these mechanisms by making the stable prefix structurally
+explicit---the IMMUTABLE\_CONTEXT and CAPABILITY\_DECLARATION layers are
+always positioned first and never change across invocations in a session,
+making them natural cache targets.
+
+\paragraph{Formal specifications for LLMs.}
+Closest to ICS in spirit is TypeChat~\citep{typechat2023}, which uses type
+schemas to constrain outputs, and work on schema-constrained
+decoding~\citep{willard2023efficient,geng2023grammar}. These focus on
+\emph{output} structure; ICS defines contracts for both input and output.
+There is, to our knowledge, no prior work that defines a formal
+\emph{multi-layer input specification} for LLM instructions with explicit
+lifetime semantics, directive syntax, and a conformance model.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{The ICS Specification}
+\label{sec:spec}
+
+An ICS-compliant instruction is composed of exactly five layers, appearing
+in the canonical order defined below. Each layer is delimited by boundary
+markers:
+
+\begin{lstlisting}
+###ICS:<LAYER_NAME>###
+<layer content>
+###END:<LAYER_NAME>###
+\end{lstlisting}
+
+Layers MUST appear in order. A parser encountering layers out of order MUST
+reject the instruction as non-conformant. The five layers and their lifetime
+semantics are as follows.
+
+\subsection{IMMUTABLE\_CONTEXT}
+\label{sec:ic}
+
+IMMUTABLE\_CONTEXT declares long-lived facts that remain constant across all
+tasks within a domain: system description, repository or schema layout,
+architectural invariants, external dependency contracts. It MUST NOT include
+task-specific instructions. It is the only layer eligible for aggressive
+prompt caching, because it is stable across sessions by definition.
+
+\textbf{Key rules.} Content MUST NOT be restated, redefined, or contradicted
+in any subsequent layer. Any content that would be valid in IMMUTABLE\_CONTEXT
+but is placed in SESSION\_STATE or TASK\_PAYLOAD is a conformance violation.
+
+\subsection{CAPABILITY\_DECLARATION}
+\label{sec:cd}
+
+CAPABILITY\_DECLARATION defines what the model is permitted, forbidden, and
+required to do. All permissions are expressed using three directives:
+\texttt{ALLOW}, \texttt{DENY}, and \texttt{REQUIRE}. Undeclared actions are
+DENIED by default.
+
+\subsubsection{Directive grammar}
+\label{sec:capgram}
+
+\begin{lstlisting}[language=ICS]
+directive  ::= KEYWORD WS+ action (WS+ qualifier)? (WS+ "IF" WS+ condition)?
+KEYWORD    ::= "ALLOW" | "DENY" | "REQUIRE"
+action     ::= WORD (WS+ WORD)*
+qualifier  ::= QWORD WS+ target
+QWORD      ::= "WITHIN" | "ON" | "WITH" | "UNLESS"
+target     ::= WORD (WS+ WORD)*
+condition  ::= WORD (WS+ WORD)*
+WORD       ::= [A-Za-z0-9_./-]+
+WS         ::= " " | "\t"
+\end{lstlisting}
+
+The grammar is intentionally liberal on scope expressions to support existing
+codebase idioms without requiring rewrites at adoption time. A normative scope
+grammar is deferred to ICS v0.2 as an optional conformance level. Example
+directives:
+
+\begin{lstlisting}[language=ICS]
+ALLOW   file modification WITHIN src/orders/
+DENY    modification of src/orders/api/
+DENY    introduction of float arithmetic ON monetary values
+REQUIRE type annotations ON all new functions
+REQUIRE backward compatibility WITH gateway/v2/ API contracts
+\end{lstlisting}
+
+\subsection{SESSION\_STATE}
+\label{sec:ss}
+
+SESSION\_STATE captures temporary assumptions and decisions that accumulate
+within a session but must not outlast it: conclusions reached in prior
+invocations, temporary flags, confirmed facts about the current task scope.
+Each entry SHOULD carry an identifier or timestamp.
+
+A session ends when SESSION\_STATE contains only the sentinel value
+\texttt{CLEAR}:
+
+\begin{lstlisting}
+###ICS:SESSION_STATE###
+CLEAR
+###END:SESSION_STATE###
+\end{lstlisting}
+
+A SESSION\_STATE layer containing \texttt{CLEAR} alongside other content MUST
+be rejected as malformed. Declaring a new IMMUTABLE\_CONTEXT implicitly clears
+any prior SESSION\_STATE.
+
+\subsection{TASK\_PAYLOAD}
+\label{sec:tp}
+
+TASK\_PAYLOAD is the only layer that changes per invocation. It specifies the
+precise action to be performed, without restating context from preceding
+layers. A TASK\_PAYLOAD is executable without clarification if all required
+inputs, constraints, and success conditions are fully defined across the
+instruction layers.
+
+\subsection{OUTPUT\_CONTRACT}
+\label{sec:oc}
+
+OUTPUT\_CONTRACT declares the required shape of the response. It is response-
+scoped but MUST be declared before execution. All four fields are required:
+
+\begin{center}
+\begin{tabularx}{\linewidth}{lX}
+\toprule
+\textbf{Field} & \textbf{Meaning} \\
+\midrule
+\texttt{format}     & Output encoding (JSON, unified diff, prose, \ldots) \\
+\texttt{schema}     & Structure definition (JSON Schema, field list, \ldots) \\
+\texttt{variance}   & Explicitly permitted deviations; unlisted variance is forbidden \\
+\texttt{on\_failure} & Required behavior when output cannot conform \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+Free-form prose is invalid unless \texttt{format: prose} is declared
+explicitly. Outputs that do not satisfy the contract MUST NOT be partially
+accepted; the \texttt{on\_failure} behavior MUST be applied.
+
+\subsection{Conformance}
+\label{sec:conform}
+
+An instruction is \emph{ICS-compliant} if and only if all five layers are
+present, delimited correctly, in canonical order, and satisfy the layer-
+specific rules above. Partial compliance is not defined; the predicate is
+binary.
+
+A conformance checker MUST verify, in order: (1) all five boundary tags are
+well-formed and present; (2) layers appear in canonical order; (3) SESSION\_STATE
+containing \texttt{CLEAR} contains no other content; (4) no layer restates,
+redefines, or contradicts a preceding layer; (5) CAPABILITY\_DECLARATION uses
+only \texttt{ALLOW}/\texttt{DENY}/\texttt{REQUIRE} directives; (6) OUTPUT\_CONTRACT
+contains all four required fields.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Worked Examples}
+\label{sec:examples}
+
+We provide fully conformant examples across five production-representative
+domains to demonstrate that ICS is not specific to software development but
+applies wherever an LLM is given repeatable, structured tasks. Abbreviated
+examples appear below; complete examples are in the accompanying appendices.
+
+\paragraph{Domain 1: Code refactoring.}
+A development team drives automated modifications on an order management
+service. IMMUTABLE\_CONTEXT declares the language, repository layout, and
+monetary invariants; CAPABILITY\_DECLARATION locks the API layer against
+modification; SESSION\_STATE accumulates confirmed findings about the
+discount function; TASK\_PAYLOAD requests a targeted split of one function.
+
+\paragraph{Domain 2: Log analysis.}
+A recurring analytics pipeline runs latency breakdowns against API gateway
+logs. CAPABILITY\_DECLARATION includes \texttt{DENY output of individual
+caller\_id values} to enforce a privacy constraint that would otherwise be
+re-stated (and potentially forgotten) in each TASK\_PAYLOAD.
+
+\paragraph{Domain 3: Infrastructure change (Terraform).}
+A platform team manages multi-account AWS infrastructure. CAPABILITY\_DECLARATION
+uses absolute \texttt{DENY} directives to lock \texttt{infra/prod/} against
+modification regardless of task phrasing, and \texttt{REQUIRE tagging} encodes
+a cost-attribution convention that applies to every task in the session.
+
+\paragraph{Domain 4: Database schema review.}
+A review-only session assesses Alembic migration scripts.
+CAPABILITY\_DECLARATION declares \texttt{DENY generation of migration file
+content}---the model's role is reviewer, not author---and three
+\texttt{REQUIRE} directives encode the team's known error classes. The
+OUTPUT\_CONTRACT includes \texttt{verdict: "PASS" | "FAIL"} as an enumerated
+field, making the pass/fail signal machine-checkable without inspecting the
+violations array.
+
+\paragraph{Domain 5: B2B payments platform (RAG + agent).}
+A real-world example used in our empirical evaluation (\S\ref{sec:eval}).
+IMMUTABLE\_CONTEXT covers 15 architectural invariants, 9 core data models,
+and a full event-type registry. CAPABILITY\_DECLARATION includes
+compliance-critical directives (\texttt{DENY logging of PII fields},
+\texttt{DENY introduction of float arithmetic ON monetary values}).
+The permanent context is 4{,}115 API-counted tokens---sufficient to trigger
+the prompt-caching threshold on \texttt{claude-haiku-4-5-20251001}.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Evaluation}
+\label{sec:eval}
+
+We evaluate ICS along two axes: (1) \emph{structural token savings}---the
+reduction in tokens sent per invocation attributable to lifetime separation
+alone, independent of any pricing scheme; and (2) \emph{effective cost
+savings}---the combined effect of structural savings and prompt-caching
+pricing on real API responses.
+
+\subsection{Structural savings: mathematical proof}
+\label{sec:proof}
+
+Let $T$ be the total token count of a full ICS instruction.
+Let $P$ be the token count of the permanent layers
+(IMMUTABLE\_CONTEXT $+$ CAPABILITY\_DECLARATION).
+Let $V = T - P$ be the token count of the variable layers
+(SESSION\_STATE $+$ TASK\_PAYLOAD $+$ OUTPUT\_CONTRACT).
+
+The na\"{i}ve approach re-sends $T$ tokens on every invocation:
+\[
+  C_{\text{naive}}(N) = T \cdot N
+\]
+
+The ICS approach sends permanent layers once (or on session reset) and
+variable layers on every invocation. Let $S \leq N$ be the number of
+session-state changes. Then:
+\[
+  C_{\text{ics}}(N) = P \cdot 1 \;+\; V_S \cdot S \;+\; V_T \cdot N
+\]
+where $V_S$ and $V_T$ are the session and task/output token counts
+respectively. Because $P > 0$ and $P < T$, we have
+$C_{\text{ics}}(N) < C_{\text{naive}}(N)$ for all $N > 1$.
+
+This is an identity---it holds for every ICS-compliant instruction regardless
+of content or model. The savings rate converges to $P/T$ as $N \to \infty$.
+
+\subsection{Token counting: method independence}
+\label{sec:counting}
+
+Table~\ref{tab:counting} shows token counts and savings at $N{=}10$
+for two offline counting methods applied to the code-refactoring example
+from Appendix A.
+
+\begin{table}[h]
+\centering
+\caption{Token savings at $N{=}10$ across two counting methods.}
+\label{tab:counting}
+\begin{tabular}{llrr}
+\toprule
+\textbf{Example} & \textbf{Method} & \textbf{Na\"{i}ve tokens} & \textbf{Savings} \\
+\midrule
+Code refactoring & Approx ($\ell/4$) & 4,830 & 53.7\% \\
+Code refactoring & Word-boundary BPE & 4,830 & 55.2\% \\
+Log analysis     & Approx ($\ell/4$) & 5,520 & 55.2\% \\
+Log analysis     & Word-boundary BPE & 5,520 & 53.1\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The savings percentage is stable at 53--55\% across both examples and both
+methods, confirming that the structural saving is not an artifact of any
+particular token-counting approximation.
+
+\subsection{Savings as a function of invocation count}
+\label{sec:scaling}
+
+Table~\ref{tab:scaling} shows how savings grow as $N$ increases on the
+code-refactoring example (word-boundary counting). Savings grow
+monotonically, approaching $P/T \approx 63\%$ as $N \to \infty$.
+
+\begin{table}[h]
+\centering
+\caption{Token savings as a function of invocation count $N$.}
+\label{tab:scaling}
+\begin{tabular}{rrrrr}
+\toprule
+$N$ & Na\"{i}ve tokens & ICS tokens & Saved & Savings \% \\
+\midrule
+1  & 483    & 483    & 0      & 0.0\%  \\
+5  & 2,415  & 1,313  & 1,102  & 45.6\% \\
+10 & 4,830  & 2,166  & 2,664  & 55.2\% \\
+20 & 9,660  & 3,872  & 5,788  & 59.9\% \\
+50 & 24,150 & 8,990  & 15,160 & 62.8\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Live API measurement}
+\label{sec:live}
+
+We ran both the na\"{i}ve and ICS approaches against the Anthropic Messages
+API using \texttt{claude-haiku-4-5-20251001} on the payments-platform example
+(Domain~5). The ICS approach places the permanent layers in a single content
+block marked \texttt{cache\_control: ephemeral}; the variable layers are in
+separate unmarked blocks. The na\"{i}ve approach sends the full instruction
+as a flat string with no cache markup.
+
+We measured \texttt{input\_tokens}, \texttt{cache\_creation\_input\_tokens},
+and \texttt{cache\_read\_input\_tokens} from the API response \texttt{usage}
+field across 10 invocations.
+
+\begin{table}[h]
+\centering
+\caption{Live API token usage at $N{=}10$. Permanent layer: 4,115 tokens.}
+\label{tab:live}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Approach} & \textbf{Full-rate tokens} & \textbf{Cache-write} & \textbf{Cache-read} & \textbf{Cost (USD)} \\
+\midrule
+Na\"{i}ve & 46,040 & 0      & 0      & \$0.03811 \\
+ICS       & 4,850  & 0      & 41,150 & \$0.00845 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Applying Anthropic's caching rates (cache writes at $1.25\times$ standard,
+cache reads at $0.10\times$ standard), the ICS approach achieves a
+\textbf{77.8\%} cost reduction at $N{=}10$ (\$0.02966 saved per 10-invocation
+session). The cache was warm from invocation 1 due to a prior warm-up call
+during threshold testing; every subsequent ICS invocation read 4,115 tokens
+from cache at the reduced rate.
+
+\paragraph{Cache activation threshold.}
+We empirically established that \texttt{claude-haiku-4-5-20251001} requires
+$\geq{\sim}4{,}096$ tokens in the cached block to activate caching---higher
+than the 1,024-token threshold documented for Claude~3 models. ICS's
+requirement that IMMUTABLE\_CONTEXT be semantically complete encourages callers
+to include full context in this layer, naturally pushing its size toward the
+activation threshold for real-world workloads.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Why the output contract matters}
+\label{sec:oc-discuss}
+
+Requiring an OUTPUT\_CONTRACT before execution forces the caller to
+articulate success conditions prior to invoking the model. This has two
+practical effects. First, it makes failure states machine-detectable: a
+caller checking for the \texttt{BLOCKED:} prefix or the
+\texttt{\{"status": "error"\}} JSON envelope does not need to parse the
+output to determine whether the task succeeded. Second, it shifts the retry
+decision: if an output fails the contract check, the correct response is to
+update the relevant layer, not to re-prompt with corrective prose. This
+distinction---interface update versus retry---is the core behavioral
+difference between ICS-compliant systems and ad hoc prompting.
+
+\subsection{Adoption considerations}
+\label{sec:adoption}
+
+ICS is more verbose than informal prompting. A five-layer instruction for a
+simple task may be longer than the equivalent prose prompt. This overhead is
+intentional and appropriate for systems where instructions are authored once
+and executed many times---the cost of verbosity is paid once, while the
+benefits (caching, auditability, maintainability) compound across invocations.
+For one-off or exploratory use, ICS is not the right tool.
+
+The scope grammar in CAPABILITY\_DECLARATION is intentionally liberal in
+v0.1. Two implementations may express the same constraint using different
+syntax and both claim compliance. This trades machine-parseability for
+adoption breadth: teams can migrate their existing constraint idioms without
+rewriting. A normative scope grammar is planned for v0.2 as an optional
+conformance level.
+
+\subsection{Complementary to existing approaches}
+\label{sec:complementary}
+
+ICS is not a replacement for prompt optimization (DSPy), schema-constrained
+decoding (Guidance, LMQL), or context management systems (MemGPT, RAG). It
+operates at the layer \emph{below} these: it defines how an instruction is
+structured and validated, not how it is generated, optimized, or executed.
+A DSPy pipeline could emit ICS-compliant instructions; a RAG system could
+place retrieved documents in TASK\_PAYLOAD while keeping system context in
+IMMUTABLE\_CONTEXT.
+
+\subsection{Limitations}
+\label{sec:limits}
+
+\textbf{No user study.} We demonstrate token and cost savings empirically but
+do not report a user study on whether teams find ICS usable or whether it
+reduces prompt-related bugs in practice. Adoption evidence beyond synthetic
+examples remains future work.
+
+\textbf{Single model family tested.} Live experiments use \texttt{claude-haiku-4-5-20251001}.
+The structural savings proof is model-agnostic, but the observed
+cost savings depend on a provider's caching pricing schedule. Experiments on
+OpenAI and other providers with caching APIs are deferred to future work.
+
+\textbf{Multi-modal context deferred.} ICS v0.1 treats instruction content as
+text. Images, audio, and tool call results that should participate in lifetime
+separation are not addressed. Multi-modal context lifetime is deferred to
+v0.2.
+
+\textbf{Session persistence is caller-managed.} ICS defines session semantics
+(begin, accumulate, clear) but does not define storage mechanisms. Callers
+must maintain SESSION\_STATE across invocations externally. ICS does not
+provide a persistence protocol.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section{Conclusion}
+\label{sec:conclusion}
+
+We have presented ICS, a formal five-layer specification for LLM instructions
+that treats prompts as interfaces rather than prose. ICS separates instruction
+content by lifetime, declares capabilities using verifiable directive syntax,
+and requires explicit output contracts before execution. These design choices
+address the four failure modes that recur in production LLM systems---context
+collapse, implicit constraints, ambiguous output expectations, and retry as
+a first resort---at the structural level rather than through better prompting
+practices.
+
+Empirically, ICS's lifetime separation enables prompt-caching APIs to reduce
+effective cost by 77.8\% at $N{=}10$ on a real-world B2B payments workload.
+The underlying token savings (55.2\% structural, independent of pricing) are
+proven to hold for any ICS-compliant instruction and any counting method.
+
+The specification, validator, token analyzer, live test harness, and five
+domain examples are available at
+\url{https://github.com/[repository]}.
+
+% ─────────────────────────────────────────────────────────────────────────────
+\section*{Acknowledgements}
+[Acknowledgements redacted for review.]
+
+% ─────────────────────────────────────────────────────────────────────────────
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+\end{document}
