@@ -285,7 +285,7 @@ DENY    modification of any file WITHIN tests/
 DENY    deletion of any migration file WITHIN infra/migrations/
 DENY    introduction of float arithmetic ON monetary values
 DENY    direct SQL UPDATE of Payment.status UNLESS routed through apply_transition()
-DENY    introduction of new external dependencies UNLESS approved in pyproject.toml
+DENY    introduction of external dependencies NOT already listed in pyproject.toml at session start
 DENY    logging of PII fields
 
 # Mandatory requirements

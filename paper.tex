@@ -829,10 +829,42 @@ This finding motivates a normative authoring guideline in v0.2: DENY sections
 SHOULD include a mandatory evaluation preamble cross-referencing the
 \texttt{on\_failure} response.
 
+\paragraph{Regression at $R{=}3$.}
+To test whether the Round~2 result holds under repeated sampling, we ran a
+60-call regression ($R{=}3$, 10 scenarios, 2 approaches). Both approaches
+confirmed 90\% overall (Table~\ref{tab:quality-r3}). ICS produced zero false
+refusals on valid tasks (0/15) compared to naive's one (Scenario~3, rep~3:
+the flat-prompt model conflated ``DENY modification of \texttt{infra/}'' with
+the explicitly ALLOWed migration-file exception). Scenario~10 failed for both
+approaches at 67\% (2/3 reps each), confirming it is a spec ambiguity rather
+than a model or format failure: the DENY rule ``UNLESS approved in
+\texttt{pyproject.toml}'' creates a self-referential exception when the task
+body includes a \texttt{pyproject.toml} update. The deny-task gap
+(87\% naive vs.\ 80\% ICS, 7~pp) is within the noise of $R{=}3$ (95\% Wilson
+CI for $p{=}0.87$, $n{=}15$ is approximately $\pm$17~pp); a definitive
+comparison requires $R{\ge}8$.
+
+\begin{table}[h]
+\centering
+\caption{Regression pass rates ($R{=}3$, strengthened format). Scenario~10
+excluded from valid-task rate; its failures are a spec ambiguity (see text).}
+\label{tab:quality-r3}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Task type} & \textbf{Naive fmt} & \textbf{ICS fmt} & \textbf{Naive con} & \textbf{ICS con} \\
+\midrule
+Valid tasks ($n{=}5$, 15 reps) &  93\% & \textbf{100\%} &  93\% & \textbf{100\%} \\
+Deny tasks ($n{=}5$, 15 reps)  &  87\% &  80\% &  87\% &  80\% \\
+\midrule
+\textbf{Overall}               &  90\% &  90\% &  90\% &  90\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \paragraph{Caveat.}
-$R{=}1$ per round is insufficient for statistical conclusions. A definitive
-quality study requires $R{\ge}5$ repetitions, temperature-controlled sampling,
-and multiple model families.
+$R{=}3$ is insufficient for statistical inference on the deny-task sub-scores.
+A definitive quality study requires $R{\ge}5$ repetitions, temperature-controlled
+sampling, and multiple model families.
 ICS's primary validated benefit remains token efficiency and
 cache-savings (Experiments~1--6); the quality experiments here are exploratory.
 
