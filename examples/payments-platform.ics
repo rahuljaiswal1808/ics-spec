@@ -326,5 +326,6 @@ variance:   diff header timestamps MAY be omitted; no other variance permitted
 on_failure: if the task violates any CAPABILITY_DECLARATION DENY rule, the ONLY
             permitted response is one line of plain text in this exact format:
               BLOCKED: <verbatim DENY rule text>
-            Do not produce a diff. Do not explain. Do not attempt a workaround.
+            No markdown. No bold asterisks. No prefix text. No explanation.
+            Do not produce a diff. Do not attempt a workaround.
 ###END:OUTPUT_CONTRACT###
