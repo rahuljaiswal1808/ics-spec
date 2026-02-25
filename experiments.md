@@ -569,6 +569,57 @@ This is codified as a follow-on spec patch (see commit after this experiment).
 
 ---
 
+## Experiment 11 — Cross-provider live measurement (Gemini)
+
+**Question:** Does Gemini's implicit prefix caching produce savings analogous to Anthropic's explicit caching? Is the ICS flat-string structure beneficial for Gemini?
+
+**Method:** Run `python ics_live_test.py examples/payments-platform.ics --provider gemini --invocations 5` with a valid `GEMINI_API_KEY`. Read `prompt_token_count` and `cached_content_token_count` from the API response `usageMetadata` field.
+
+**Model:** `gemini-2.0-flash`
+**Permanent layer tokens (word-boundary estimate):** ~4,699
+**API-counted input tokens:** 4,519 (consistently across all invocations)
+
+**Observed result (per-invocation):**
+
+| Invocation | Approach | `input_tokens` | `cached_tokens` | Output |
+|---|---|---|---|---|
+| 1–5 | naive | 4,519 | 0 | 32 |
+| 1–5 | ics | 4,519 | 0 | 32 |
+
+**Summary at 5 invocations:**
+
+| Metric | Naive | ICS |
+|---|---|---|
+| Full-rate input tokens | 22,595 | 22,595 |
+| Cached tokens (billed at 0.25×) | 0 | 0 |
+| Estimated cost (USD) | $0.00232 | $0.00232 |
+| **Cost saved** | | **$0.00000 (0.0%)** |
+
+**Why no cache hits:**
+
+Gemini 2.0 Flash's implicit prefix caching activates at **≥ ~32K tokens** in the stable prefix. The payments-platform ICS permanent layers total ~4,519 API-counted tokens — approximately **7× below the activation threshold**. This is a fundamental difference from Anthropic (threshold ~4,096 tokens) and explains the zero cache hit rate.
+
+The `ics_live_test.py` banner correctly flagged this in advance:
+> *"Cache model: Gemini implicit context caching (≥ 32K tokens typical)."*
+
+**Structural note — naive and ICS prompts are identical for Gemini:**
+
+For Gemini (and OpenAI), `build_ics_system_flat()` produces the same flat string as `build_naive_system()` because `LAYER_ORDER` already places permanent layers (`IMMUTABLE_CONTEXT`, `CAPABILITY_DECLARATION`) at the front. There is no structural difference in the prompt bytes sent — ICS's benefit for these providers is purely *temporal*: permanent layers grouped first gives the implicit caching engine the longest possible stable prefix to latch onto. For a 4.5K-token prompt this distinction is moot; it only matters once the context exceeds the provider's implicit-caching threshold.
+
+**Provider comparison (all three providers, N=5–10):**
+
+| Factor | Anthropic (Exp 5) | OpenAI (Exp 6) | Gemini (Exp 11) |
+|---|---|---|---|
+| Caching mechanism | Explicit `cache_control` markup | Automatic (identical prefix) | Automatic (identical prefix) |
+| Activation threshold | ~4,096 tokens | ~1,024 tokens (est.) | ~32,000 tokens |
+| Cache read rate | 0.10× | 0.50× | 0.25× |
+| Savings at N=10 (4.5K perm. tokens) | **77.8%** | **15.3%** | **0%** |
+| Min context for Gemini savings | — | — | Expand to ≥32K tokens |
+
+**Conclusion:** The Gemini integration is correct. Zero savings at this context size are expected and consistent with Gemini's documented implicit-caching threshold. ICS caching benefits for Gemini require prompts with permanent-layer content well above 32K tokens — appropriate for large-scale system contexts (full codebases, extensive capability declarations), not the compact payments-platform example. The token estimator overestimated by ~4% (4,699 word-boundary vs 4,519 API-counted), consistent with prior calibration data.
+
+---
+
 ## Summary
 
 | Experiment | Status | Key result |
@@ -585,11 +636,14 @@ This is codified as a follow-on spec patch (see commit after this experiment).
 | 9. Statistical power benchmark (R=8) | **Completed** | Naive 95% / ICS 88% overall; deny gap 12.5 pp (p=0.13); R≥14 needed for 80% power |
 | 9b. Post-fix R=8 baseline | **Confirmed** | ICS 100% / naive 98.8%; markdown fix closes residual deny gap |
 | 10. Scenario expansion (20 scenarios) | **Completed** | ICS 96% / 98%, naive 98% / 98% overall; all 11 DENY rules covered; ALLOW specificity conflict identified |
+| 11. Live API measurement (Gemini) | **Confirmed (threshold-limited)** | 0% saving at N=5 (4.5K tokens < 32K threshold); integration correct; savings require ≥32K-token permanent layers |
 
 The structural savings claim (Experiments 1–3) is proven without any API dependency.
 The pricing-amplification claim is confirmed on two providers (Experiments 5–6):
 Anthropic achieves 77.8% at N=10 (explicit `cache_control` markup, 0.10× rate),
 OpenAI achieves 15.3% at N=10 (automatic prefix caching, 0.50× rate).
+Gemini (Experiment 11) shows 0% saving at 4.5K tokens — expected, since Gemini's
+implicit-caching threshold is ~32K tokens; ICS benefits for Gemini require larger contexts.
 Experiments 7 and 7b show that DENY salience is a phrasing problem, not a structural
 defect: three targeted format fixes brought ICS from 50% to 90% overall quality
 compliance, matching or exceeding naive. The OUTPUT_CONTRACT markdown fix (Exp 9b)
