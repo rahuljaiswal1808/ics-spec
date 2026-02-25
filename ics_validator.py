@@ -357,6 +357,76 @@ def step5_capability_declaration_syntax(
                 )
 
 
+def step7_allow_deny_overlap(layers: list[Layer], result: ValidationResult):
+    """
+    Step 7: Warn when a DENY directive's WITHIN target is a path prefix of an
+    ALLOW directive's WITHIN target (or equal to it).
+
+    Per §3.2, the more specific ALLOW takes precedence — but models may still
+    apply the general DENY and produce a false BLOCK.  This check surfaces
+    such overlaps so authors can audit intended behaviour before deployment.
+
+    Example:
+        DENY  modification of infra/              ← general
+        ALLOW new Alembic migration file creation WITHIN infra/migrations/  ← specific
+
+    The ALLOW target 'infra/migrations/' starts with the DENY target 'infra/',
+    so a warning is emitted.
+    """
+    cd_layers = [l for l in layers if l.name == "CAPABILITY_DECLARATION"]
+    for layer in cd_layers:
+        allows_with: list[tuple[str, str]] = []   # (directive line, WITHIN target)
+        denys_with:  list[tuple[str, str]] = []
+
+        for line in layer.content.splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#"):
+                continue
+            tokens = stripped.split()
+            if not tokens:
+                continue
+            keyword = tokens[0].upper()
+            if keyword not in ("ALLOW", "DENY"):
+                continue
+
+            # Extract the WITHIN target (everything between WITHIN and IF/end).
+            within_idx = next(
+                (i for i, t in enumerate(tokens) if t.upper() == "WITHIN"), None
+            )
+            if within_idx is None:
+                continue
+            target_tokens = []
+            for t in tokens[within_idx + 1:]:
+                if t.upper() == "IF":
+                    break
+                target_tokens.append(t)
+            if not target_tokens:
+                continue
+            target = " ".join(target_tokens)
+
+            if keyword == "ALLOW":
+                allows_with.append((stripped, target))
+            else:
+                denys_with.append((stripped, target))
+
+        # For every (DENY, ALLOW) pair check whether the ALLOW target is a
+        # sub-path of the DENY target.
+        for deny_line, deny_target in denys_with:
+            deny_norm = deny_target.rstrip("/")
+            for allow_line, allow_target in allows_with:
+                allow_norm = allow_target.rstrip("/")
+                if allow_norm == deny_norm or allow_norm.startswith(deny_norm + "/"):
+                    result.add_warning(
+                        f"ALLOW/DENY specificity overlap (§3.2): "
+                        f"DENY targets '{deny_target}' which is a path prefix of "
+                        f"ALLOW target '{allow_target}'. "
+                        f"Per §3.2 the more specific ALLOW takes precedence, but "
+                        f"models may apply the general DENY. Audit intended behaviour. "
+                        f"DENY directive: '{deny_line}' | "
+                        f"ALLOW directive: '{allow_line}'"
+                    )
+
+
 def step6_output_contract_fields(
     layers: list[Layer], result: ValidationResult
 ):
@@ -404,6 +474,7 @@ def validate(text: str) -> ValidationResult:
     step4_no_redefinition(layers, result)
     step5_capability_declaration_syntax(layers, result)
     step6_output_contract_fields(layers, result)
+    step7_allow_deny_overlap(layers, result)
 
     return result
 
@@ -590,6 +661,19 @@ TESTS = [
         "expect_compliant": False,
         "expect_violation_rules": ["§3.6 (parse error)"],
     },
+    {
+        "name": "ALLOW/DENY specificity overlap emits warning (Step 7)",
+        # DENY ... WITHIN tests/ overlaps ALLOW ... WITHIN tests/unit/
+        # mirrors the payments-platform pattern: DENY infra/ vs ALLOW infra/migrations/
+        "input": COMPLIANT_EXAMPLE.replace(
+            "DENY    modification of any file WITHIN tests/",
+            "DENY    modification of any file WITHIN tests/\n"
+            "ALLOW   new fixture creation WITHIN tests/unit/",
+        ),
+        "expect_compliant": True,   # overlap is a warning, not a violation
+        "expect_violation_rules": [],
+        "expect_warning_substring": "specificity overlap",
+    },
 ]
 
 
@@ -611,6 +695,10 @@ def run_tests() -> int:
             for expected_rule in test["expect_violation_rules"]:
                 if expected_rule not in found_rules:
                     ok = False
+
+        if warn_sub := test.get("expect_warning_substring"):
+            if not any(warn_sub in w for w in result.warnings):
+                ok = False
 
         status = "PASS" if ok else "FAIL"
         print(f"  [{status}] {test['name']}")

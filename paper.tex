@@ -1519,8 +1519,11 @@ schema:     standard unified diff against current HEAD;
             no changes outside src/notifications/webhooks.py unless a new helper
             in src/shared/ is strictly required
 variance:   diff header timestamps MAY be omitted
-on_failure: return plain text with prefix "BLOCKED:" and a single sentence naming
-            the CAPABILITY_DECLARATION constraint that prevents execution
+on_failure: if the task violates any CAPABILITY_DECLARATION DENY rule, the ONLY
+            permitted response is one line of plain text in this exact format:
+              BLOCKED: <verbatim DENY rule text>
+            No markdown. No bold asterisks. No prefix text. No explanation.
+            Do not produce a diff. Do not attempt a workaround.
 ###END:OUTPUT_CONTRACT###
 \end{lstlisting}
 
