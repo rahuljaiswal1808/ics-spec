@@ -4,7 +4,8 @@ Owner: Payments Engineering — Core Infrastructure team
 Language: Python 3.12
 Runtime: AWS Lambda (per-service); PostgreSQL 15 (RDS); Redis 7 (ElastiCache)
 
-Repository layout:
+Repository layout (root):
+  pyproject.toml  — Python project metadata and pinned dependency list (not inside infra/)
   src/
     ledger/         — double-entry ledger; source of truth for all balances
     ledger/entries/ — entry creation, idempotency, reversal logic
@@ -285,7 +286,7 @@ DENY    modification of any file WITHIN tests/
 DENY    deletion of any migration file WITHIN infra/migrations/
 DENY    introduction of float arithmetic ON monetary values
 DENY    direct SQL UPDATE of Payment.status UNLESS routed through apply_transition()
-DENY    introduction of external dependencies NOT already listed in pyproject.toml at session start
+DENY    adding any package to pyproject.toml that is NOT listed in the External dependencies section of IMMUTABLE_CONTEXT (covers both editing pyproject.toml and importing a new library)
 DENY    logging of PII fields
 
 # Mandatory requirements
