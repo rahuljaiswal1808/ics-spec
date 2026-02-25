@@ -161,6 +161,16 @@ REQUIRE backward compatibility WITH api/v1/
 - MUST NOT be overridden or extended by TASK_PAYLOAD
 - Undeclared actions are DENIED by default
 
+**Evaluation rules**
+- DENY rules MUST be evaluated before any output is produced. A response that
+  begins with partial output and appends a DENY notice afterward is
+  non-conformant.
+- When a DENY directive and an ALLOW directive both apply to the same action,
+  DENY takes precedence unconditionally.
+- When an `on_failure` response is triggered by a DENY rule, the DENY rule
+  text MUST be quoted verbatim from the CAPABILITY_DECLARATION. Paraphrasing
+  is not permitted.
+
 ---
 
 ### 3.3 SESSION_STATE
@@ -247,6 +257,14 @@ Defines the required shape and constraints of the output. Output validation is t
 - Variance MUST be explicitly enumerated; any variance not listed is forbidden
 - Free-form prose is invalid unless `format: prose` is explicitly declared
 - If an output does not conform, it MUST be treated as invalid, MUST NOT be partially accepted, and the declared `on_failure` behavior MUST be applied
+
+**on_failure format conformance**
+The `on_failure` response MUST conform exactly to the format declared in the
+`on_failure` field. Formatting that is not explicitly declared — including
+markdown bold, italic, headers, code fences, or bullet lists — is not
+permitted in an `on_failure` response unless the declaration explicitly
+includes it. A response that adds formatting beyond what was declared is
+non-conformant even if the semantic content is correct.
 
 **Example**
 
