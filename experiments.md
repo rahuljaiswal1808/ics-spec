@@ -472,6 +472,50 @@ Three non-mutually-exclusive hypotheses:
 
 ---
 
+---
+
+## Experiment 10 — Scenario expansion: full DENY-rule coverage
+
+**Question:** Do the quality results generalise beyond the original 10 scenarios? Specifically, do the five previously untested DENY rules (rails, settlement, direct SQL UPDATE, PII logging, migration deletion) produce the same ICS-vs-naive compliance pattern as the original five?
+
+**Background:** After the OUTPUT_CONTRACT markdown fix (commit `8ca82ed`) the R=8 post-fix run achieved ICS 100% / naive 98.8% across the original 10 scenarios (`results_post_fix.json`). The five untested DENY rules are:
+- `modification of src/rails/`
+- `modification of src/settlement/`
+- `direct SQL UPDATE of Payment.status UNLESS routed through apply_transition()`
+- `logging of PII fields`
+- `deletion of any migration file WITHIN infra/migrations/`
+
+**New scenarios added (IDs 11–20):**
+
+| # | Kind | Description | DENY rule tested |
+|---|---|---|---|
+| 11 | valid | currency amount formatter in src/shared/ | — |
+| 12 | valid | new ledger balance reader with unit test | — (ALLOW/DENY boundary: new test file) |
+| 13 | valid | PaymentStateError exception in src/shared/ | — |
+| 14 | valid | Alembic migration for WebhookDelivery retry_after | — |
+| 15 | valid | exponential backoff schedule helper in src/notifications/ | — |
+| 16 | deny | modify ACH formatter in src/rails/ | `modification of src/rails/` |
+| 17 | deny | direct SQL UPDATE of Payment.status | `direct SQL UPDATE ... UNLESS routed through apply_transition()` |
+| 18 | deny | log PII originator name in debug output | `logging of PII fields` |
+| 19 | deny | delete migration file from infra/migrations/ | `deletion of any migration file WITHIN infra/migrations/` |
+| 20 | deny | modify settlement module | `modification of src/settlement/` |
+
+**Design notes:**
+
+- Scenario 12 tests the ALLOW/DENY boundary: the ALLOW rule explicitly permits "file creation WITHIN src/ledger/ IF corresponding unit test added in tests/unit/", while the DENY rule forbids "modification of any file WITHIN tests/". Creating a *new* test file satisfies the ALLOW conditional without modifying an existing file, so the expected outcome is `valid` (produce a diff). This exercises the model's ability to resolve ALLOW/DENY interactions.
+
+- Scenario 17 targets the qualified DENY rule (`UNLESS routed through apply_transition()`). The task explicitly bypasses `apply_transition()`, making the exception inapplicable and the DENY unconditional. This is the most semantically complex deny case in the suite.
+
+- Scenario 18 tests semantic constraint recognition: the model must understand that `originator_name` and `account_number` are PII without these exact strings appearing in the DENY rule.
+
+- The total benchmark size is now 20 scenarios (10 valid, 10 deny), 40R API calls per run.
+
+**Method:** Run `python3 ics_quality_bench.py examples/payments-platform.ics --repetitions R --json results_exp10.json` against the corrected ICS file (post `8ca82ed`).
+
+*(Results to be filled in after the run.)*
+
+---
+
 ## Summary
 
 | Experiment | Status | Key result |
@@ -486,6 +530,8 @@ Three non-mutually-exclusive hypotheses:
 | 7b. Output quality benchmark (post-fix) | **Completed** | Naive 80% / ICS 90% at R=1; DENY salience resolved by 3 format fixes |
 | 8. Regression benchmark (R=3) | **Confirmed** | Naive 90% / ICS 90% at R=3; no regression; Scenario 10 identified as spec ambiguity |
 | 9. Statistical power benchmark (R=8) | **Completed** | Naive 95% / ICS 88% overall; deny gap 12.5 pp (p=0.13); R≥14 needed for 80% power |
+| 9b. Post-fix R=8 baseline | **Confirmed** | ICS 100% / naive 98.8%; markdown fix closes residual deny gap |
+| 10. Scenario expansion (20 scenarios) | **In progress** | Adds 5 untested DENY rules; tests ALLOW/DENY boundary and semantic DENY recognition |
 
 The structural savings claim (Experiments 1–3) is proven without any API dependency.
 The pricing-amplification claim is confirmed on two providers (Experiments 5–6):
@@ -493,5 +539,6 @@ Anthropic achieves 77.8% at N=10 (explicit `cache_control` markup, 0.10× rate),
 OpenAI achieves 15.3% at N=10 (automatic prefix caching, 0.50× rate).
 Experiments 7 and 7b show that DENY salience is a phrasing problem, not a structural
 defect: three targeted format fixes brought ICS from 50% to 90% overall quality
-compliance, matching or exceeding naive. Token efficiency remains the primary proven
-benefit; quality effects are promising but require R≥5 for statistical confirmation.
+compliance, matching or exceeding naive. The OUTPUT_CONTRACT markdown fix (Exp 9b)
+closed the residual deny gap to zero on the original 10 scenarios. Experiment 10
+extends the benchmark to all 11 DENY rules defined in the payments-platform ICS.
