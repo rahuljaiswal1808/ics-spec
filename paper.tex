@@ -2,7 +2,7 @@
 
 % ── Packages ──────────────────────────────────────────────────────────────────
 \usepackage[margin=1in]{geometry}
-\usepackage{microtype}
+\usepackage[protrusion=true,expansion=false]{microtype}
 \usepackage{hyperref}
 \usepackage{url}
 \usepackage{booktabs}
@@ -1539,11 +1539,11 @@ Pass rates are from the $R{=}8$ run (\texttt{results\_exp10\_r8.json}).
 ``fmt'' = format\_pass; ``con'' = constraint\_pass.  A ``---'' in the DENY
 rule column indicates a valid (non-deny) scenario.
 
-\begin{table}[h]
+\begin{table}[htbp]
 \centering
 \caption{Scenario catalogue: valid tasks (Scenarios 1--15).}
 \label{tab:scenarios-valid}
-\small
+\footnotesize
 \begin{tabularx}{\linewidth}{clXrr}
 \toprule
 \textbf{\#} & \textbf{Target area} & \textbf{Description} &
@@ -1577,12 +1577,12 @@ vs.\ \texttt{ALLOW infra/migrations/}).} \\
 \end{tabularx}
 \end{table}
 
-\begin{table}[h]
+\begin{table}[htbp]
 \centering
 \caption{Scenario catalogue: deny tasks (Scenarios 6--10 and 16--20).}
 \label{tab:scenarios-deny}
-\small
-\begin{tabularx}{\linewidth}{clXrr}
+\footnotesize
+\begin{tabularx}{\linewidth}{cXXrr}
 \toprule
 \textbf{\#} & \textbf{DENY rule triggered} & \textbf{Task description} &
 \textbf{Naive fmt/con} & \textbf{ICS fmt/con} \\
