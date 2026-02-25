@@ -64,7 +64,9 @@ An instruction is ICS-compliant if it satisfies all rules in `ICS-v0.1.md`. See 
 | `RATIONALE.md` | Why ICS exists and how to interpret it |
 | `APPENDIX-A.md` | Annotated examples: code refactoring, analytics, session reset |
 | `APPENDIX-B.md` | Annotated examples: Terraform infrastructure, schema migration review |
+| `APPENDIX-C.md` | Quality benchmark scenario catalogue (20 scenarios, payments-platform domain) |
 | `experiments.md` | Empirical evidence for the token-savings claim (§2.2, §2.4) |
+| `paper.tex` | LaTeX source for the ICS technical paper (compiled to `paper.pdf`) |
 
 ### Quick start: installation
 
