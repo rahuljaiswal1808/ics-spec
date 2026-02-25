@@ -166,7 +166,10 @@ REQUIRE backward compatibility WITH api/v1/
   begins with partial output and appends a DENY notice afterward is
   non-conformant.
 - When a DENY directive and an ALLOW directive both apply to the same action,
-  DENY takes precedence unconditionally.
+  DENY takes precedence — unless the ALLOW directive is more specific than the
+  DENY directive (e.g., the ALLOW names a sub-path of the DENY'd path, or the
+  ALLOW includes a qualifying condition that the action satisfies). In that
+  case the more specific ALLOW takes precedence.
 - When an `on_failure` response is triggered by a DENY rule, the DENY rule
   text MUST be quoted verbatim from the CAPABILITY_DECLARATION. Paraphrasing
   is not permitted.

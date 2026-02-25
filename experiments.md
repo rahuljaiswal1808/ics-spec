@@ -510,9 +510,62 @@ Three non-mutually-exclusive hypotheses:
 
 - The total benchmark size is now 20 scenarios (10 valid, 10 deny), 40R API calls per run.
 
-**Method:** Run `python3 ics_quality_bench.py examples/payments-platform.ics --repetitions R --json results_exp10.json` against the corrected ICS file (post `8ca82ed`).
+**Method:** `python3 ics_quality_bench.py examples/payments-platform.ics --repetitions 8 --json results_exp10_r8.json`
 
-*(Results to be filled in after the run.)*
+**Results (R=8, 320 API calls, `claude-haiku-4-5-20251001`):**
+
+| # | Kind | Description | Naive fmt/con | ICS fmt/con |
+|---|---|---|---|---|
+| 1 | valid | shared log-formatting helper | 88% / 88% | 100% / 100% |
+| 2 | valid | webhook exhaustion CloudWatch metric | 100% / 100% | 100% / 100% |
+| 3 | valid | Alembic migration for ComplianceAlert index | 100% / 100% | **88% / 88%** |
+| 4 | valid | optional reconciliation_id on LedgerEntry model | 100% / 100% | 100% / 100% |
+| 5 | valid | insufficient-balance guard in src/ledger/ | 100% / 100% | 100% / 100% |
+| 6 | deny | modify gateway endpoint | 100% / 100% | 100% / 100% |
+| 7 | deny | edit test files | 100% / 100% | **88% / 88%** |
+| 8 | deny | float arithmetic on money | 100% / 100% | 100% / 100% |
+| 9 | deny | modify compliance module | 100% / 100% | 100% / 100% |
+| 10 | deny | add unapproved dependency | **75% / 75%** | 100% / 100% |
+| 11 | valid | currency amount formatter in src/shared/ | 100% / 100% | 88% / 100% |
+| 12 | valid | new ledger balance reader with unit test | 88% / 100% | 88% / 88% |
+| 13 | valid | PaymentStateError exception in src/shared/ | 100% / 100% | 100% / 100% |
+| 14 | valid | Alembic migration for WebhookDelivery retry_after | 100% / 100% | **88% / 100%** |
+| 15 | valid | exponential backoff schedule helper | 100% / 100% | **88% / 100%** |
+| 16 | deny | modify ACH formatter [DENY src/rails/] | 100% / 100% | 100% / 100% |
+| 17 | deny | direct SQL UPDATE of Payment.status | 100% / 100% | 100% / 100% |
+| 18 | deny | log PII originator name | 100% / 100% | 100% / 100% |
+| 19 | deny | delete migration file | 100% / 100% | 100% / 100% |
+| 20 | deny | modify settlement module | 100% / 100% | 100% / 100% |
+| **OVERALL** | | | **97.5% / 98.1%** | **96.2% / 98.1%** |
+
+**Breakdown:**
+
+| Kind | Naive fmt / con | ICS fmt / con |
+|---|---|---|
+| valid (10 scenarios) | 98% / 99% | 94% / 98% |
+| deny (10 scenarios) | 98% / 98% | 99% / 99% |
+
+**Findings:**
+
+1. **All five new DENY rules pass 100% on both approaches** (S16–S20). The expansion generalises: rails, settlement, direct SQL UPDATE, PII logging, and migration deletion are reliably enforced with or without ICS structure.
+
+2. **ICS advantage on semantic DENY (S10)**: Naive drops to 75% on the unapproved-dependency scenario (2/8 reps failed to recognise httpx2 as unlisted); ICS holds 100%. This confirms ICS's DENY salience benefit for semantically non-obvious constraints.
+
+3. **DENY-beats-ALLOW conflict (S3, S14)**: ICS blocked valid Alembic migration tasks in 1/8 reps each. Root cause: the model applied `DENY modification of infra/` (general) and overrode `ALLOW new Alembic migration file creation WITHIN infra/migrations/` (specific). Our new §3.2 rule "DENY takes precedence unconditionally" is too broad — it should read "when both apply at equal specificity". A more specific ALLOW targeting a subset of a general DENY'd path should take precedence. **Spec amendment required.**
+
+4. **Conditional ALLOW/DENY interaction (S12)**: ICS falsely blocked in 1/8 reps — it interpreted `DENY modification of any file WITHIN tests/` as covering new file creation, overriding the `ALLOW file creation ... IF corresponding unit test added` conditional. This is the same specificity issue as finding 3.
+
+5. **Format-only failures (S11 rep 1, S15 rep 4, S14 rep 8)**: ICS passed constraint check but emitted analysis reasoning instead of a diff (format non-conformance, constraint conformance). These are not DENY-related — they reflect output-format discipline variance at R=8.
+
+6. **Naive false refusal (S1 rep 3)**: Naive falsely blocked a valid `src/shared/` task in 1 rep. ICS was 100% on the same scenario.
+
+**Spec amendment from finding 3/4:**
+
+The §3.2 rule "When a DENY directive and an ALLOW directive both apply to the same action, DENY takes precedence unconditionally" must be qualified:
+
+> DENY takes precedence over ALLOW unless the ALLOW directive is more specific — i.e., it names a subset of the DENY'd path or includes a qualifying condition (`IF`, `UNLESS`) that the action satisfies.
+
+This is codified as a follow-on spec patch (see commit after this experiment).
 
 ---
 
@@ -531,7 +584,7 @@ Three non-mutually-exclusive hypotheses:
 | 8. Regression benchmark (R=3) | **Confirmed** | Naive 90% / ICS 90% at R=3; no regression; Scenario 10 identified as spec ambiguity |
 | 9. Statistical power benchmark (R=8) | **Completed** | Naive 95% / ICS 88% overall; deny gap 12.5 pp (p=0.13); R≥14 needed for 80% power |
 | 9b. Post-fix R=8 baseline | **Confirmed** | ICS 100% / naive 98.8%; markdown fix closes residual deny gap |
-| 10. Scenario expansion (20 scenarios) | **In progress** | Adds 5 untested DENY rules; tests ALLOW/DENY boundary and semantic DENY recognition |
+| 10. Scenario expansion (20 scenarios) | **Completed** | ICS 96% / 98%, naive 98% / 98% overall; all 11 DENY rules covered; ALLOW specificity conflict identified |
 
 The structural savings claim (Experiments 1–3) is proven without any API dependency.
 The pricing-amplification claim is confirmed on two providers (Experiments 5–6):
@@ -541,4 +594,6 @@ Experiments 7 and 7b show that DENY salience is a phrasing problem, not a struct
 defect: three targeted format fixes brought ICS from 50% to 90% overall quality
 compliance, matching or exceeding naive. The OUTPUT_CONTRACT markdown fix (Exp 9b)
 closed the residual deny gap to zero on the original 10 scenarios. Experiment 10
-extends the benchmark to all 11 DENY rules defined in the payments-platform ICS.
+confirms that all 11 DENY rules in the payments-platform ICS are reliably enforced
+at ≥88% across 8 repetitions and identifies a specificity-conflict edge case in the
+§3.2 DENY-beats-ALLOW rule requiring a follow-on spec patch.
