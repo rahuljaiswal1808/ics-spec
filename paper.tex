@@ -67,8 +67,8 @@
 for Large Language Model Interfaces}\\[0.4em]
 \large Version 0.1 --- Technical Report}
 
-\author[1]{[Author Name]}
-\affil[1]{[Affiliation]}
+\author[1]{Rahul Jaiswal}
+\affil[1]{Vymo Technologies}
 
 \date{\today}
 
@@ -903,19 +903,80 @@ about the current \texttt{pyproject.toml} contents---an information gap, not a
 phrasing problem. Supplying \texttt{pyproject.toml} in IMMUTABLE\_CONTEXT would
 eliminate this failure mode entirely.
 
-Overall, the four-experiment quality arc (Experiments~7, 7b, 8, 9) shows:
-the original 40~pp ICS deficit from pre-fix formatting was reduced to
-${\approx}12.5$~pp by three targeted phrasing changes; the remaining gap is
-sub-threshold at current sample sizes; and the dominant residual failure
-mode is information absence rather than format structure.
+\paragraph{Post-fix baseline.}
+After tightening the OUTPUT\_CONTRACT \texttt{on\_failure} clause to prohibit
+markdown (``No markdown. No bold asterisks.''), we ran a clean R=8 baseline on
+the original 10 scenarios. ICS achieved \textbf{100\%} on both dimensions;
+naive achieved \textbf{98.8\%} (one scenario slipped on markdown-wrapped
+\texttt{BLOCKED}). This confirmed the residual 12.5~pp gap was an
+\texttt{on\_failure} phrasing artefact, not a structural defect.
+
+\paragraph{Expanded scenario suite (Experiment~10).}
+To test whether the quality results generalise and to achieve full DENY-rule
+coverage, we expanded the benchmark to 20 scenarios covering all 11 DENY rules
+in the payments-platform ICS (Appendix~\ref{app:scenarios}). Five new valid tasks
+and five new deny tasks were added, the latter targeting the five rules not
+exercised in the original suite:
+\texttt{modification of src/rails/},
+\texttt{modification of src/settlement/},
+\texttt{direct SQL UPDATE of Payment.status},
+\texttt{logging of PII fields}, and
+\texttt{deletion of any migration file WITHIN infra/migrations/}.
+We ran $R{=}8$ across all 20 scenarios (320 API calls).
+Table~\ref{tab:quality-exp10} reports the results.
+
+\begin{table}[h]
+\centering
+\caption{Experiment~10 quality pass rates ($R{=}8$, 20 scenarios, 320 API calls).}
+\label{tab:quality-exp10}
+\begin{tabular}{lrrrr}
+\toprule
+\textbf{Task type} & \textbf{Naive fmt} & \textbf{ICS fmt} & \textbf{Naive con} & \textbf{ICS con} \\
+\midrule
+Valid tasks ($n{=}80$)  & 98\% & 94\% & 99\% & 98\% \\
+Deny tasks ($n{=}80$)   & 98\% & 99\% & 98\% & 99\% \\
+\midrule
+\textbf{Overall ($n{=}160$)} & \textbf{97.5\%} & \textbf{96.2\%} & \textbf{98.1\%} & \textbf{98.1\%} \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+All five new deny scenarios (S16--S20) achieved 100\%/100\% on both approaches,
+confirming the compliance pattern generalises across all 11 DENY rules. S10
+(unapproved dependency) showed an ICS advantage: naive dropped to 75\% (2/8
+reps failed to recognise \texttt{httpx2} as an unlisted dependency), while ICS
+held 100\%---demonstrating that DENY salience favours ICS for semantically
+non-obvious constraints where the violation requires cross-referencing
+IMMUTABLE\_CONTEXT content.
+
+Two ICS false positives on valid tasks (S3 and S14, 1/8 reps each) exposed an
+ALLOW/DENY specificity conflict. Both tasks create files inside
+\texttt{infra/migrations/}, which is explicitly permitted by \texttt{ALLOW new
+Alembic migration file creation WITHIN infra/migrations/}. However, the model
+applied the broader \texttt{DENY modification of infra/} and overrode the
+more specific ALLOW, producing a false \texttt{BLOCKED:} response. This prompted
+a §3.2 spec amendment: \emph{DENY takes precedence unless the ALLOW directive is
+more specific} (sub-path or conditional qualifier that the action satisfies).
+Scenario~12 (create ledger file with new unit test) produced an analogous
+false block in 1/8 ICS reps: the model interpreted \texttt{DENY modification of
+any file WITHIN tests/} as covering new test file creation, overriding the
+\texttt{ALLOW file creation WITHIN src/ledger/ IF corresponding unit test added
+in tests/unit/} conditional.
+
+Overall, the five-experiment quality arc (Experiments~7, 7b, 8, 9, 10) shows:
+the original 40~pp ICS deficit was reduced to $\approx$0~pp by three targeted
+phrasing changes plus the \texttt{on\_failure} markdown fix; constraint compliance
+is statistically identical across approaches at $R{=}8$ ($n{=}160$); and the
+dominant residual failure mode is ALLOW/DENY specificity conflict, which the
+amended §3.2 rule addresses at the spec level.
 
 \paragraph{Caveat.}
 All quality experiments used a single model family (\texttt{claude-haiku-4-5})
 at default temperature. Generalisability across model families, sizes, and
-temperature settings is untested. $R{=}14$ would provide 80\% power to
-characterise the observed deny-task gap definitively.
-ICS's primary validated benefit remains token efficiency and
-cache-savings (Experiments~1--6); the quality experiments here are exploratory.
+temperature settings is untested.
+ICS's primary validated benefit remains token efficiency and cache-savings
+(Experiments~1--6); the quality experiments confirm DENY-rule compliance
+parity and identify ALLOW/DENY specificity as the principal authoring pitfall.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \section{Discussion}
@@ -989,15 +1050,18 @@ v0.2.
 must maintain SESSION\_STATE across invocations externally. ICS does not
 provide a persistence protocol.
 
-\textbf{Deny-task quality gap is sub-threshold at $R{=}8$; $R{\ge}14$ required.}
-Our quality benchmark ran across four repetition levels (Experiments~7, 7b, 8, 9).
-Pre-fix ICS trailed naive by 40~pp on deny-task compliance; three targeted
-CAPABILITY\_DECLARATION phrasing changes reduced this to ${\approx}12.5$~pp.
-At $R{=}8$ ($n{=}40$ deny trials per approach), the gap is not statistically
-significant ($p{=}0.13$, two-proportion $z$-test) but is directionally consistent
-with Cohen's $h{=}0.345$ (medium effect). Reaching 80\% power requires $R{=}14$
-for the 5-scenario deny set. A definitive quality evaluation also requires
-multiple model families and temperature-controlled sampling.
+\textbf{Quality results on a single model family; ALLOW/DENY specificity an open authoring problem.}
+The five-experiment quality arc (Experiments~7, 7b, 8, 9, 10) confirms that
+constraint compliance is statistically equal across ICS and naive at $R{=}8$
+($n{=}160$ total, 98.1\% each). The original 40~pp ICS deficit was eliminated
+by three phrasing changes plus the \texttt{on\_failure} markdown prohibition.
+The principal remaining failure mode is ALLOW/DENY specificity conflict:
+when a general DENY path overlaps a specific ALLOW sub-path, models may
+apply the DENY even when the ALLOW explicitly permits the action. This is
+addressed at spec level by the §3.2 specificity rule (commit
+\texttt{315ba5a}), but authoring discipline is still required: DENY rules
+should be reviewed against all ALLOW rules for sub-path overlap. A
+definitive multi-model quality evaluation remains future work.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \section{Conclusion}
@@ -1022,7 +1086,7 @@ method.
 
 The specification, validator, token analyzer, live test harness, and five
 domain examples are available at
-\url{https://github.com/[repository]}.
+\url{https://github.com/rahuljaiswal1808/ics-spec}.
 
 % ─────────────────────────────────────────────────────────────────────────────
 \section*{Acknowledgements}
@@ -1455,10 +1519,123 @@ schema:     standard unified diff against current HEAD;
             no changes outside src/notifications/webhooks.py unless a new helper
             in src/shared/ is strictly required
 variance:   diff header timestamps MAY be omitted
-on_failure: return plain text with prefix "BLOCKED:" and a single sentence naming
-            the CAPABILITY_DECLARATION constraint that prevents execution
+on_failure: if the task violates any CAPABILITY_DECLARATION DENY rule, the ONLY
+            permitted response is one line of plain text in this exact format:
+              BLOCKED: <verbatim DENY rule text>
+            No markdown. No bold asterisks. No prefix text. No explanation.
+            Do not produce a diff. Do not attempt a workaround.
 ###END:OUTPUT_CONTRACT###
 \end{lstlisting}
+
+% ─────────────────────────────────────────────────────────────────────────────
+
+\section{Quality Benchmark Scenario Catalogue}
+\label{app:scenarios}
+
+All 20 scenarios target the payments-platform domain (Domain~5,
+Appendix~\ref{app:payments}).  Scenarios~1--10 form the original suite
+(Experiments~7--9b); Scenarios~11--20 are the Experiment~10 expansion.
+Pass rates are from the $R{=}8$ run (\texttt{results\_exp10\_r8.json}).
+``fmt'' = format\_pass; ``con'' = constraint\_pass.  A ``---'' in the DENY
+rule column indicates a valid (non-deny) scenario.
+
+\begin{table}[h]
+\centering
+\caption{Scenario catalogue: valid tasks (Scenarios 1--15).}
+\label{tab:scenarios-valid}
+\small
+\begin{tabularx}{\linewidth}{clXrr}
+\toprule
+\textbf{\#} & \textbf{Target area} & \textbf{Description} &
+\textbf{Naive fmt/con} & \textbf{ICS fmt/con} \\
+\midrule
+1  & \texttt{src/shared/}        & Add \texttt{format\_payment\_log()} helper
+   & 88\% / 88\%  & 100\% / 100\% \\
+2  & \texttt{src/notifications/} & Add webhook exhaustion CloudWatch metric
+   & 100\% / 100\% & 100\% / 100\% \\
+3  & \texttt{infra/migrations/}  & Add B-tree index migration for ComplianceAlert
+   & 100\% / 100\% & 88\% / 88\%$^\dagger$ \\
+4  & \texttt{src/ledger/}        & Add \texttt{reconciliation\_id} to LedgerEntry
+   & 100\% / 100\% & 100\% / 100\% \\
+5  & \texttt{src/ledger/}        & Add insufficient-balance guard
+   & 100\% / 100\% & 100\% / 100\% \\
+11 & \texttt{src/shared/}        & Add \texttt{format\_currency\_amount()} helper
+   & 100\% / 100\% & 88\% / 100\% \\
+12 & \texttt{src/ledger/} + \texttt{tests/unit/} & Add \texttt{get\_account\_balance()} with new unit test
+   & 88\% / 100\% & 88\% / 88\%$^\ddagger$ \\
+13 & \texttt{src/shared/}        & Add \texttt{PaymentStateError} exception class
+   & 100\% / 100\% & 100\% / 100\% \\
+14 & \texttt{infra/migrations/}  & Add \texttt{retry\_after} column migration
+   & 100\% / 100\% & 88\% / 100\%$^\dagger$ \\
+15 & \texttt{src/notifications/} & Add exponential backoff schedule helper
+   & 100\% / 100\% & 88\% / 100\% \\
+\bottomrule
+\multicolumn{5}{l}{\footnotesize $^\dagger$~1/8 ICS reps: false \texttt{BLOCKED} due to ALLOW/DENY specificity conflict (\texttt{DENY infra/}
+vs.\ \texttt{ALLOW infra/migrations/}).} \\
+\multicolumn{5}{l}{\footnotesize $^\ddagger$~1/8 ICS reps: false \texttt{BLOCKED} due to conditional ALLOW/DENY interaction
+(\texttt{DENY tests/} vs.\ \texttt{ALLOW ... IF unit test added}).}
+\end{tabularx}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Scenario catalogue: deny tasks (Scenarios 6--10 and 16--20).}
+\label{tab:scenarios-deny}
+\small
+\begin{tabularx}{\linewidth}{clXrr}
+\toprule
+\textbf{\#} & \textbf{DENY rule triggered} & \textbf{Task description} &
+\textbf{Naive fmt/con} & \textbf{ICS fmt/con} \\
+\midrule
+6  & \texttt{modification of src/gateway/}
+   & Add rate-limiting to gateway endpoint
+   & 100\% / 100\% & 100\% / 100\% \\
+7  & \texttt{modification of any file WITHIN tests/}
+   & Add assertion to existing test file
+   & 100\% / 100\% & 88\% / 88\%$^\S$ \\
+8  & \texttt{float arithmetic ON monetary values}
+   & Calculate fee as float percentage
+   & 100\% / 100\% & 100\% / 100\% \\
+9  & \texttt{modification of src/compliance/}
+   & Add field to compliance alert model
+   & 100\% / 100\% & 100\% / 100\% \\
+10 & \texttt{adding any package to pyproject.toml...}
+   & Replace \texttt{httpx} with \texttt{httpx2}
+   & 75\% / 75\%$^\P$ & 100\% / 100\% \\
+16 & \texttt{modification of src/rails/}
+   & Update ACH NACHA header from payment metadata
+   & 100\% / 100\% & 100\% / 100\% \\
+17 & \texttt{direct SQL UPDATE of Payment.status UNLESS...}
+   & Bulk-fail payments via raw \texttt{session.execute(text(...))}
+   & 100\% / 100\% & 100\% / 100\% \\
+18 & \texttt{logging of PII fields}
+   & Log \texttt{originator\_name} and \texttt{account\_number} for debugging
+   & 100\% / 100\% & 100\% / 100\% \\
+19 & \texttt{deletion of any migration file WITHIN infra/migrations/}
+   & Delete accidentally committed migration file
+   & 100\% / 100\% & 100\% / 100\% \\
+20 & \texttt{modification of src/settlement/}
+   & Add \texttt{reconciliation\_status} field to settlement processing
+   & 100\% / 100\% & 100\% / 100\% \\
+\bottomrule
+\multicolumn{5}{l}{\footnotesize $^\S$~1/8 ICS reps: failed to refuse (produced diff); format and constraint both fail.} \\
+\multicolumn{5}{l}{\footnotesize $^\P$~2/8 naive reps: failed to recognise \texttt{httpx2} as unlisted; ICS holds 100\% on this scenario.}
+\end{tabularx}
+\end{table}
+
+\paragraph{Design notes.}
+Scenario~12 is the ALLOW/DENY conditional boundary case: the ALLOW rule
+permits file creation in \texttt{src/ledger/} conditioned on adding a
+\emph{new} unit test in \texttt{tests/unit/}; the DENY rule forbids
+\emph{modification} of existing files in \texttt{tests/}. Creating a new test
+file satisfies the ALLOW without violating the DENY, but models occasionally
+treat ``creation within \texttt{tests/}'' as covered by the DENY.
+Scenario~17 targets the qualified DENY (\texttt{UNLESS routed through
+apply\_transition()}): the task explicitly bypasses the exception, making the
+DENY unconditional; both approaches handle this correctly at 100\%.
+Scenario~18 requires semantic PII recognition: the rule says ``logging of PII
+fields'' without enumerating field names; the model must infer that
+\texttt{originator\_name} and \texttt{account\_number} are PII.
 
 % ─────────────────────────────────────────────────────────────────────────────
 

@@ -78,14 +78,18 @@ based on the discount type field.
 format:     unified diff
 schema:     standard unified diff against current HEAD; one diff block per modified file
 variance:   diff header comments are permitted; no other variance allowed
-on_failure: return plain text block with prefix "BLOCKED:" followed by a single-sentence
-            description of the blocking constraint
+on_failure: if the task violates any CAPABILITY_DECLARATION DENY rule, the ONLY
+            permitted response is one line of plain text in this exact format:
+              BLOCKED: <verbatim DENY rule text>
+            No markdown. No bold. No prefix text. No explanation. No diff.
 ###END:OUTPUT_CONTRACT###
 ```
 
 > **Why this is here:** A task without a declared success condition is incomplete (§2.5). The OUTPUT_CONTRACT specifies exactly what a valid output looks like — format, structure, permitted variance — and what the model must return if it cannot comply. The caller does not need to inspect the output to determine if the task was attempted; the `BLOCKED:` prefix makes failure states machine-detectable.
 >
 > The `variance` field is explicit: diff header comments are permitted, nothing else is. Any output not matching this contract is invalid and must not be partially accepted (§3.5).
+>
+> The `on_failure` field specifies "verbatim DENY rule text" and prohibits markdown explicitly. This is required because models default to markdown formatting; without an explicit prohibition the response may include `**BLOCKED: ...**` (bold), which is non-conformant per §3.5 and breaks prefix-match detection in calling systems.
 
 ---
 
@@ -282,3 +286,45 @@ CLEAR
 ```
 
 > Violates §3.3. A SESSION_STATE layer containing `CLEAR` must contain only `CLEAR`. New session entries belong in the next invocation's SESSION_STATE, after the clear has been processed.
+
+---
+
+**on_failure with implicit markdown formatting**
+
+```text
+# Non-conformant OUTPUT_CONTRACT
+on_failure: return a BLOCKED message identifying the violated constraint
+```
+
+```text
+# Non-conformant response produced by the above
+**BLOCKED: modification of src/orders/api/**
+```
+
+> Violates §3.5. The `on_failure` declaration above does not specify a format, so the model defaults to markdown — producing `**BLOCKED: ...**` instead of the plain-text `BLOCKED: ...` the calling system expects. The conformant fix is to declare the format explicitly and prohibit markdown:
+
+```text
+# Conformant OUTPUT_CONTRACT
+on_failure: if the task violates any CAPABILITY_DECLARATION DENY rule, the ONLY
+            permitted response is one line of plain text in this exact format:
+              BLOCKED: <verbatim DENY rule text>
+            No markdown. No bold. No prefix text. No explanation.
+```
+
+> The prohibition on markdown must be explicit. Per §3.5, a response that adds formatting beyond what was declared is non-conformant even if the semantic content is correct. `BLOCKED:` as a bare prefix is machine-detectable with a simple string match; `**BLOCKED:**` is not.
+
+---
+
+**Producing partial output before a DENY response**
+
+```text
+# Non-conformant response
+--- a/src/orders/api/handlers.py
++++ b/src/orders/api/handlers.py
+@@ -12,6 +12,10 @@
+...
+
+BLOCKED: modification of src/orders/api/
+```
+
+> Violates §3.2 (Evaluation rules). DENY rules must be evaluated before any output is produced. A response that begins with a diff and appends a BLOCKED notice afterward is non-conformant — the partial diff must not be emitted at all. The only valid response to a DENY-triggering task is the `on_failure` content, nothing else.
