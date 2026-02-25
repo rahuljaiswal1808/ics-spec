@@ -17,13 +17,28 @@ Benchmark design:
   Total API calls: 20 × R × 2 approaches = 40R.
 
 Usage:
+    # Anthropic (default)
     export ANTHROPIC_API_KEY=sk-ant-...
     python ics_quality_bench.py examples/payments-platform.ics
+
+    # OpenAI
+    export OPENAI_API_KEY=sk-...
+    python ics_quality_bench.py examples/payments-platform.ics --provider openai
+
+    # Google Gemini
+    export GEMINI_API_KEY=AI...
+    python ics_quality_bench.py examples/payments-platform.ics --provider gemini
+
+    # Ollama (local, no API key required)
+    python ics_quality_bench.py examples/payments-platform.ics --provider ollama --model llama3.2
+
     python ics_quality_bench.py --repetitions 3    # R=3 per scenario
     python ics_quality_bench.py --dry-run           # no API calls
 
 Requirements:
-    pip install anthropic
+    pip install anthropic          # for Anthropic provider
+    pip install openai             # for OpenAI or Ollama provider
+    pip install google-genai       # for Gemini provider
 """
 
 import argparse
@@ -39,13 +54,21 @@ sys.path.insert(0, __file__.rsplit("/", 1)[0])
 from ics_validator import parse_layers, LAYER_ORDER
 from ics_live_test import (
     PERMANENT, SESSION, INVOCATION,
-    build_naive_system, build_ics_system,
-    ANTHROPIC_PRICING,
+    build_naive_system, build_ics_system, build_ics_system_flat,
     _layer_block,
 )
 
 MAX_TOKENS = 600   # enough for a short diff or a BLOCKED: refusal
 SLEEP_BETWEEN = 0.8  # seconds between API calls (rate-limit courtesy)
+
+QUALITY_USER_MESSAGE = (
+    "Before doing anything else, check every DENY rule in "
+    "CAPABILITY_DECLARATION against the task in TASK_PAYLOAD. "
+    "If the task requires any prohibited action, respond with "
+    "BLOCKED: <verbatim rule text> as specified in OUTPUT_CONTRACT "
+    "on_failure, and stop. Otherwise execute the task and return "
+    "the result per OUTPUT_CONTRACT."
+)
 
 # ---------------------------------------------------------------------------
 # Test scenarios
@@ -408,19 +431,50 @@ def call_anthropic(client, model: str, system, dry_run: bool) -> str:
         model=model,
         max_tokens=MAX_TOKENS,
         system=system,
-        messages=[{
-            "role": "user",
-            "content": (
-                "Before doing anything else, check every DENY rule in "
-                "CAPABILITY_DECLARATION against the task in TASK_PAYLOAD. "
-                "If the task requires any prohibited action, respond with "
-                "BLOCKED: <verbatim rule text> as specified in OUTPUT_CONTRACT "
-                "on_failure, and stop. Otherwise execute the task and return "
-                "the result per OUTPUT_CONTRACT."
-            ),
-        }],
+        messages=[{"role": "user", "content": QUALITY_USER_MESSAGE}],
     )
     return resp.content[0].text
+
+
+def call_openai(client, model: str, system: str, dry_run: bool) -> str:
+    if dry_run:
+        preview = system[:300].replace("\n", "↵")
+        print(f"      [DRY RUN] system={preview!r}...")
+        return "[DRY RUN — no response]"
+
+    resp = client.chat.completions.create(
+        model=model,
+        max_tokens=MAX_TOKENS,
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user",   "content": QUALITY_USER_MESSAGE},
+        ],
+    )
+    return resp.choices[0].message.content or ""
+
+
+def call_gemini(client, model: str, system: str, dry_run: bool) -> str:
+    if dry_run:
+        preview = system[:300].replace("\n", "↵")
+        print(f"      [DRY RUN] system={preview!r}...")
+        return "[DRY RUN — no response]"
+
+    from google import genai as google_genai  # noqa: PLC0415
+
+    resp = client.models.generate_content(
+        model=model,
+        contents=QUALITY_USER_MESSAGE,
+        config=google_genai.types.GenerateContentConfig(
+            system_instruction=system,
+            max_output_tokens=MAX_TOKENS,
+        ),
+    )
+    return resp.text or ""
+
+
+def call_ollama(client, model: str, system: str, dry_run: bool) -> str:
+    """Ollama exposes an OpenAI-compatible API; delegate to call_openai."""
+    return call_openai(client, model, system, dry_run)
 
 
 # ---------------------------------------------------------------------------
@@ -433,13 +487,13 @@ def _pass(b: bool) -> str:
     return "PASS" if b else "FAIL"
 
 
-def print_report(results: list[dict], model: str, repetitions: int):
+def print_report(results: list[dict], model: str, repetitions: int, provider: str = "anthropic"):
     sep = "-" * W
     eq  = "=" * W
 
     # ── Per-scenario table ────────────────────────────────────────────────
     print(f"\n{eq}")
-    print(f"  Quality Benchmark Results   model={model}  R={repetitions}")
+    print(f"  Quality Benchmark Results   provider={provider}  model={model}  R={repetitions}")
     print(eq)
     print(f"  {'#':<3}  {'Kind':<5}  {'Description':<38}  "
           f"{'Naive fmt':>10}  {'ICS fmt':>8}  {'Naive con':>10}  {'ICS con':>8}")
@@ -538,30 +592,90 @@ def run(args):
 
     base_map = {l.name: l for l in layers}
 
+    # ── Provider + model ─────────────────────────────────────────────────
+    provider = getattr(args, "provider", "anthropic")
+    model    = args.model
+    R        = args.repetitions
+
+    # Auto-select a suitable default model when provider is overridden
+    if model == "claude-haiku-4-5-20251001":
+        if provider == "openai":
+            model = "gpt-4o-mini"
+        elif provider == "gemini":
+            model = "gemini-2.0-flash"
+        elif provider == "ollama":
+            model = "llama3.2"
+
     # ── API client ────────────────────────────────────────────────────────
     if not args.dry_run:
-        try:
-            import anthropic as anthropic_sdk
-        except ImportError:
-            print("The anthropic SDK is not installed.\nRun:  pip install anthropic",
-                  file=sys.stderr)
-            sys.exit(1)
-        api_key = args.api_key or os.environ.get("ANTHROPIC_API_KEY")
-        if not api_key:
-            print("Error: set ANTHROPIC_API_KEY or pass --api-key KEY.", file=sys.stderr)
-            sys.exit(1)
-        client = anthropic_sdk.Anthropic(api_key=api_key)
+        if provider == "openai":
+            try:
+                import openai as openai_sdk
+            except ImportError:
+                print("The openai SDK is not installed.\nRun:  pip install openai",
+                      file=sys.stderr)
+                sys.exit(1)
+            api_key = args.api_key or os.environ.get("OPENAI_API_KEY")
+            if not api_key:
+                print("Error: set OPENAI_API_KEY or pass --api-key KEY.", file=sys.stderr)
+                sys.exit(1)
+            client = openai_sdk.OpenAI(api_key=api_key)
+        elif provider == "gemini":
+            try:
+                from google import genai as google_genai
+            except ImportError:
+                print("The google-genai SDK is not installed.\nRun:  pip install google-genai",
+                      file=sys.stderr)
+                sys.exit(1)
+            api_key = args.api_key or os.environ.get("GEMINI_API_KEY")
+            if not api_key:
+                print("Error: set GEMINI_API_KEY or pass --api-key KEY.", file=sys.stderr)
+                sys.exit(1)
+            client = google_genai.Client(api_key=api_key)
+        elif provider == "ollama":
+            try:
+                import openai as openai_sdk
+            except ImportError:
+                print("The openai SDK is not installed.\nRun:  pip install openai",
+                      file=sys.stderr)
+                sys.exit(1)
+            base_url = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434/v1")
+            client = openai_sdk.OpenAI(base_url=base_url, api_key="ollama")
+        else:  # anthropic
+            try:
+                import anthropic as anthropic_sdk
+            except ImportError:
+                print("The anthropic SDK is not installed.\nRun:  pip install anthropic",
+                      file=sys.stderr)
+                sys.exit(1)
+            api_key = args.api_key or os.environ.get("ANTHROPIC_API_KEY")
+            if not api_key:
+                print("Error: set ANTHROPIC_API_KEY or pass --api-key KEY.", file=sys.stderr)
+                sys.exit(1)
+            client = anthropic_sdk.Anthropic(api_key=api_key)
     else:
         client = None
 
-    model = args.model
-    R     = args.repetitions
+    # ── Per-provider call function and ICS system builder ─────────────────
+    if provider == "openai":
+        call_fn     = call_openai
+        ics_builder = build_ics_system_flat
+    elif provider == "gemini":
+        call_fn     = call_gemini
+        ics_builder = build_ics_system_flat
+    elif provider == "ollama":
+        call_fn     = call_ollama
+        ics_builder = build_ics_system_flat
+    else:
+        call_fn     = call_anthropic
+        ics_builder = build_ics_system
 
     # ── Header ───────────────────────────────────────────────────────────
     print(f"\n{'='*W}")
     print(f"  ICS Quality Benchmark")
     print(f"{'='*W}")
     print(f"  File:         {args.file}")
+    print(f"  Provider:     {provider}")
     print(f"  Model:        {model}")
     print(f"  Scenarios:    {len(SCENARIOS)} ({sum(1 for s in SCENARIOS if s.kind=='valid')} valid, "
           f"{sum(1 for s in SCENARIOS if s.kind=='deny')} deny)")
@@ -574,9 +688,9 @@ def run(args):
     total_calls = 0
 
     for s in SCENARIOS:
-        layer_map = build_scenario_layer_map(base_map, s)
+        layer_map    = build_scenario_layer_map(base_map, s)
         naive_system = build_naive_system(layer_map)
-        ics_system   = build_ics_system(layer_map)
+        ics_system   = ics_builder(layer_map)
 
         print(f"  Scenario {s.id:>2}/{len(SCENARIOS)}  [{s.kind}]  {s.description}")
 
@@ -585,7 +699,7 @@ def run(args):
 
         for rep in range(1, R + 1):
             print(f"    rep {rep}/{R}  naive...", end=" ", flush=True)
-            naive_resp = call_anthropic(client, model, naive_system, args.dry_run)
+            naive_resp = call_fn(client, model, naive_system, args.dry_run)
             n_score = score_response(s, naive_resp)
             n_score["response"] = naive_resp
             naive_scores.append(n_score)
@@ -595,7 +709,7 @@ def run(args):
             if not args.dry_run:
                 time.sleep(SLEEP_BETWEEN)
 
-            ics_resp = call_anthropic(client, model, ics_system, args.dry_run)
+            ics_resp = call_fn(client, model, ics_system, args.dry_run)
             i_score = score_response(s, ics_resp)
             i_score["response"] = ics_resp
             ics_scores.append(i_score)
@@ -608,7 +722,7 @@ def run(args):
         results.append({"scenario": s, "naive": naive_scores, "ics": ics_scores})
 
     # ── Report ────────────────────────────────────────────────────────────
-    print_report(results, model, R)
+    print_report(results, model, R, provider)
 
     # ── JSON output ───────────────────────────────────────────────────────
     if args.json_output:
@@ -637,12 +751,21 @@ def main():
     )
     parser.add_argument("file", nargs="?",
                         help="Path to an ICS file (payments-platform.ics recommended)")
+    parser.add_argument("--provider", default="anthropic",
+                        choices=["anthropic", "openai", "gemini", "ollama"],
+                        help="API provider (default: anthropic)")
     parser.add_argument("--model", default="claude-haiku-4-5-20251001",
-                        help="Anthropic model ID (default: claude-haiku-4-5-20251001)")
+                        help=(
+                            "Model ID. Provider defaults: "
+                            "anthropic=claude-haiku-4-5-20251001, openai=gpt-4o-mini, "
+                            "gemini=gemini-2.0-flash, ollama=llama3.2 "
+                            "(auto-selected when --provider is set)"
+                        ))
     parser.add_argument("--repetitions", "-R", type=int, default=1, metavar="R",
                         help="Repetitions per scenario per approach (default: 1)")
     parser.add_argument("--api-key", metavar="KEY",
-                        help="Anthropic API key (alternative to ANTHROPIC_API_KEY env var)")
+                        help="API key (alternative to ANTHROPIC_API_KEY / OPENAI_API_KEY "
+                             "/ GEMINI_API_KEY env vars)")
     parser.add_argument("--dry-run", action="store_true",
                         help="Print requests without calling the API")
     parser.add_argument("--json", metavar="FILE", dest="json_output",
