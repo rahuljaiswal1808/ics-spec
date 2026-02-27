@@ -1,5 +1,7 @@
 # Instruction Contract Specification (ICS) v0.1
 
+<!-- © 2026 Rahul Jaiswal. Licensed under CC BY 4.0 — https://creativecommons.org/licenses/by/4.0/ -->
+
 ## 1. Scope
 
 The Instruction Contract Specification (ICS) defines a deterministic, token-aware structure for instructions provided to Large Language Models (LLMs).

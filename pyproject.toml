@@ -22,22 +22,25 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-# For ics-live-test with Anthropic
+# For ics-live-test / ics-quality-bench with Anthropic
 anthropic = ["anthropic>=0.40"]
-# For ics-live-test with OpenAI
+# For ics-live-test / ics-quality-bench with OpenAI or Ollama
 openai = ["openai>=1.0"]
+# For ics-live-test / ics-quality-bench with Google Gemini
+gemini = ["google-genai>=0.8"]
 # For exact BPE token counting in ics-analyze --exact
 exact = ["tiktoken>=0.7"]
 # Install everything
-all = ["anthropic>=0.40", "openai>=1.0", "tiktoken>=0.7"]
+all = ["anthropic>=0.40", "openai>=1.0", "google-genai>=0.8", "tiktoken>=0.7"]
 
 [project.scripts]
-ics-validate  = "ics_validator:main"
-ics-analyze   = "ics_token_analyzer:main"
-ics-live-test = "ics_live_test:main"
+ics-validate      = "ics_validator:main"
+ics-analyze       = "ics_token_analyzer:main"
+ics-live-test     = "ics_live_test:main"
+ics-quality-bench = "ics_quality_bench:main"
 
 [tool.setuptools]
-py-modules = ["ics_validator", "ics_token_analyzer", "ics_live_test"]
+py-modules = ["ics_validator", "ics_token_analyzer", "ics_live_test", "ics_quality_bench"]
 
 [project.urls]
 Repository = "https://github.com/rahuljaiswal1808/ics-spec"
