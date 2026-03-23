@@ -40,7 +40,7 @@ ics-live-test     = "ics_live_test:main"
 ics-quality-bench = "ics_quality_bench:main"
 
 [tool.setuptools]
-py-modules = ["ics_validator", "ics_token_analyzer", "ics_live_test", "ics_quality_bench", "ics_sdk"]
+py-modules = ["ics_validator", "ics_token_analyzer", "ics_live_test", "ics_quality_bench", "ics_sdk", "ics_constraint_parser"]
 
 [project.urls]
 Repository = "https://github.com/rahuljaiswal1808/ics-spec"
