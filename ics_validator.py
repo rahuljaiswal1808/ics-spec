@@ -231,6 +231,184 @@ def parse_layers(text: str) -> tuple[list[Layer], list[str]]:
 
 
 # ---------------------------------------------------------------------------
+# Output contract types, parsers, and validators
+# ---------------------------------------------------------------------------
+
+@dataclass
+class OutputContract:
+    format: str
+    schema: str
+    variance: str
+    on_failure: str
+
+
+def _parse_output_contract_fields(content: str) -> dict:
+    """
+    Parse multiline key: value fields from an OUTPUT_CONTRACT layer body.
+    Continuation lines (indented) are appended to the current field value.
+    """
+    fields = {}
+    current_key = None
+    current_lines: list[str] = []
+
+    for line in content.splitlines():
+        key_match = re.match(r"^([\w_]+)\s*:\s*(.*)", line)
+        if key_match:
+            if current_key is not None:
+                fields[current_key] = "\n".join(current_lines).strip()
+            current_key = key_match.group(1).lower()
+            first_val = key_match.group(2)
+            current_lines = [first_val] if first_val else []
+        elif current_key is not None:
+            current_lines.append(line)
+
+    if current_key is not None:
+        fields[current_key] = "\n".join(current_lines).strip()
+
+    return fields
+
+
+def parse_output_contract(
+    ics_text: str,
+) -> "tuple[Optional[OutputContract], list[str]]":
+    """
+    Extract and return the OUTPUT_CONTRACT from an ICS document.
+    Returns (OutputContract, []) on success or (None, [errors]) on failure.
+    """
+    layers, parse_errors = parse_layers(ics_text)
+    if parse_errors:
+        return None, parse_errors
+
+    oc_layers = [l for l in layers if l.name == "OUTPUT_CONTRACT"]
+    if not oc_layers:
+        return None, ["OUTPUT_CONTRACT layer not found in ICS document"]
+
+    fields = _parse_output_contract_fields(oc_layers[0].content)
+
+    missing = OUTPUT_CONTRACT_FIELDS - set(fields.keys())
+    if missing:
+        return None, [
+            f"OUTPUT_CONTRACT is missing required field(s): {', '.join(sorted(missing))}"
+        ]
+
+    return OutputContract(
+        format=fields["format"],
+        schema=fields["schema"],
+        variance=fields["variance"],
+        on_failure=fields["on_failure"],
+    ), []
+
+
+def _is_valid_json(text: str) -> bool:
+    try:
+        json.loads(text.strip())
+        return True
+    except (json.JSONDecodeError, ValueError):
+        return False
+
+
+def _is_valid_unified_diff(text: str) -> bool:
+    """Check that the text contains at least one unified diff hunk."""
+    lines = text.splitlines()
+    has_minus = any(l.startswith("--- ") for l in lines)
+    has_plus  = any(l.startswith("+++ ") for l in lines)
+    has_hunk  = any(l.startswith("@@ ") for l in lines)
+    return has_minus and has_plus and has_hunk
+
+
+# Maps normalised format name -> validator callable(text) -> bool
+_FORMAT_VALIDATORS: dict = {
+    "json":         _is_valid_json,
+    "unified diff": _is_valid_unified_diff,
+    "unified-diff": _is_valid_unified_diff,
+    "diff":         _is_valid_unified_diff,
+}
+
+
+def _is_blocked_response(text: str) -> bool:
+    return text.lstrip().startswith("BLOCKED:")
+
+
+def _validate_blocked_response(
+    output: str, contract: OutputContract, result: ValidationResult
+) -> ValidationResult:
+    """Validate a BLOCKED: response against the on_failure contract field."""
+    on_failure_lower = contract.on_failure.lower()
+
+    non_empty_lines = [l for l in output.splitlines() if l.strip()]
+    requires_single_line = (
+        "one line" in on_failure_lower or "single" in on_failure_lower
+    )
+    if requires_single_line and len(non_empty_lines) > 1:
+        result.add_violation(
+            0,
+            "OUTPUT_CONTRACT on_failure",
+            f"BLOCKED response must be a single line per on_failure spec, "
+            f"but got {len(non_empty_lines)} non-empty lines",
+        )
+
+    prohibits_markdown = (
+        "no markdown" in on_failure_lower
+        or "no bold" in on_failure_lower
+        or "no bold asterisks" in on_failure_lower
+    )
+    if prohibits_markdown and re.search(r"\*\*|__|#{1,6} ", output):
+        result.add_violation(
+            0,
+            "OUTPUT_CONTRACT on_failure",
+            "BLOCKED response contains markdown formatting, prohibited by on_failure spec",
+        )
+
+    if "blocked:" not in on_failure_lower:
+        result.add_warning(
+            "Output is a BLOCKED: response but on_failure spec does not reference 'BLOCKED:'"
+        )
+
+    return result
+
+
+def validate_output(ics_text: str, llm_output: str) -> ValidationResult:
+    """
+    Validate an LLM output against the OUTPUT_CONTRACT declared in an ICS document.
+
+    Returns a ValidationResult with:
+    - violations for definite contract breaches
+    - warnings for conditions that require human review
+    """
+    result = ValidationResult(compliant=True)
+
+    contract, errors = parse_output_contract(ics_text)
+    if errors:
+        for err in errors:
+            result.add_violation(0, "OUTPUT_CONTRACT parse error", err)
+        return result
+
+    output = llm_output.strip()
+
+    # BLOCKED responses are validated against on_failure, not format
+    if _is_blocked_response(output):
+        return _validate_blocked_response(output, contract, result)
+
+    # Format validation
+    fmt_key = contract.format.strip().lower()
+    validator = _FORMAT_VALIDATORS.get(fmt_key)
+    if validator is not None:
+        if not validator(output):
+            result.add_violation(
+                0,
+                "OUTPUT_CONTRACT format",
+                f"Output does not conform to declared format '{contract.format}'",
+            )
+    else:
+        result.add_warning(
+            f"Format '{contract.format}' has no automatic validator; "
+            "manual review required"
+        )
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Validation steps
 # ---------------------------------------------------------------------------
 
@@ -677,6 +855,176 @@ TESTS = [
 ]
 
 
+# ---------------------------------------------------------------------------
+# Output validation test suite
+# ---------------------------------------------------------------------------
+
+_OC_ICS = """
+###ICS:IMMUTABLE_CONTEXT###
+System: test
+###END:IMMUTABLE_CONTEXT###
+
+###ICS:CAPABILITY_DECLARATION###
+ALLOW read access
+###END:CAPABILITY_DECLARATION###
+
+###ICS:SESSION_STATE###
+CLEAR
+###END:SESSION_STATE###
+
+###ICS:TASK_PAYLOAD###
+Do the thing.
+###END:TASK_PAYLOAD###
+""".strip()
+
+_JSON_ICS = _OC_ICS + "\n\n" + """\
+###ICS:OUTPUT_CONTRACT###
+format:     JSON
+schema:     { "result": "string", "count": "integer" }
+variance:   none
+on_failure: return plain text starting with BLOCKED:
+###END:OUTPUT_CONTRACT###"""
+
+_DIFF_ICS = _OC_ICS + "\n\n" + """\
+###ICS:OUTPUT_CONTRACT###
+format:     unified diff
+schema:     standard unified diff against current HEAD
+variance:   diff header timestamps may be omitted
+on_failure: respond with a single line: BLOCKED: <reason>. No markdown. No bold asterisks.
+###END:OUTPUT_CONTRACT###"""
+
+_UNKNOWN_FORMAT_ICS = _OC_ICS + "\n\n" + """\
+###ICS:OUTPUT_CONTRACT###
+format:     mermaid diagram
+schema:     flowchart LR syntax
+variance:   none
+on_failure: return BLOCKED: <reason>
+###END:OUTPUT_CONTRACT###"""
+
+_VALID_DIFF = """\
+--- a/src/foo.py
++++ b/src/foo.py
+@@ -1,3 +1,4 @@
+ def foo():
+-    pass
++    return 42
+"""
+
+OUTPUT_TESTS = [
+    {
+        "name": "Valid JSON output passes",
+        "ics": _JSON_ICS,
+        "output": '{"result": "ok", "count": 3}',
+        "expect_compliant": True,
+    },
+    {
+        "name": "Invalid JSON output fails",
+        "ics": _JSON_ICS,
+        "output": "this is not json",
+        "expect_compliant": False,
+        "expect_violation_rule": "OUTPUT_CONTRACT format",
+    },
+    {
+        "name": "Valid unified diff passes",
+        "ics": _DIFF_ICS,
+        "output": _VALID_DIFF,
+        "expect_compliant": True,
+    },
+    {
+        "name": "Output missing diff markers fails",
+        "ics": _DIFF_ICS,
+        "output": "Here is my explanation without any diff.",
+        "expect_compliant": False,
+        "expect_violation_rule": "OUTPUT_CONTRACT format",
+    },
+    {
+        "name": "BLOCKED single-line passes diff contract",
+        "ics": _DIFF_ICS,
+        "output": "BLOCKED: task requires modifying src/gateway/ which is denied",
+        "expect_compliant": True,
+    },
+    {
+        "name": "BLOCKED multi-line fails when on_failure requires single line",
+        "ics": _DIFF_ICS,
+        "output": "BLOCKED: reason\nExtra explanation here.",
+        "expect_compliant": False,
+        "expect_violation_rule": "OUTPUT_CONTRACT on_failure",
+    },
+    {
+        "name": "BLOCKED with markdown fails when on_failure prohibits it",
+        "ics": _DIFF_ICS,
+        "output": "BLOCKED: **cannot modify** src/gateway/",
+        "expect_compliant": False,
+        "expect_violation_rule": "OUTPUT_CONTRACT on_failure",
+    },
+    {
+        "name": "Unknown format emits warning not violation",
+        "ics": _UNKNOWN_FORMAT_ICS,
+        "output": "graph LR\n  A --> B",
+        "expect_compliant": True,
+        "expect_warning_substring": "no automatic validator",
+    },
+    {
+        "name": "Malformed ICS returns parse error",
+        "ics": "###ICS:IMMUTABLE_CONTEXT###\nno close tag",
+        "output": "anything",
+        "expect_compliant": False,
+        "expect_violation_rule": "OUTPUT_CONTRACT parse error",
+    },
+    {
+        "name": "JSON contract with BLOCKED: passes (routes to on_failure path)",
+        "ics": _JSON_ICS,
+        "output": "BLOCKED: cannot comply",
+        "expect_compliant": True,
+    },
+]
+
+
+def run_output_tests() -> int:
+    passed = 0
+    failed = 0
+
+    print("Running ICS output validation test suite...\n")
+
+    for test in OUTPUT_TESTS:
+        result = validate_output(test["ics"], test["output"])
+        ok = True
+
+        if result.compliant != test["expect_compliant"]:
+            ok = False
+
+        if rule := test.get("expect_violation_rule"):
+            if not any(rule in v.rule for v in result.violations):
+                ok = False
+
+        if warn_sub := test.get("expect_warning_substring"):
+            if not any(warn_sub in w for w in result.warnings):
+                ok = False
+
+        status = "PASS" if ok else "FAIL"
+        print(f"  [{status}] {test['name']}")
+
+        if not ok:
+            print(f"         Expected compliant={test['expect_compliant']}, "
+                  f"got compliant={result.compliant}")
+            if rule := test.get("expect_violation_rule"):
+                found = [v.rule for v in result.violations]
+                print(f"         Expected rule containing: '{rule}'")
+                print(f"         Found rules: {found}")
+            if result.violations:
+                for v in result.violations:
+                    print(f"         {v}")
+            if result.warnings:
+                for w in result.warnings:
+                    print(f"         [WARN] {w}")
+            failed += 1
+        else:
+            passed += 1
+
+    print(f"\n{passed}/{passed + failed} tests passed.")
+    return 0 if failed == 0 else 1
+
+
 def run_tests() -> int:
     passed = 0
     failed = 0
@@ -733,7 +1081,10 @@ def main():
         sys.exit(2)
 
     if "--test" in args:
-        sys.exit(run_tests())
+        rc1 = run_tests()
+        print()
+        rc2 = run_output_tests()
+        sys.exit(0 if (rc1 == 0 and rc2 == 0) else 1)
 
     if "--stdin" in args:
         text = sys.stdin.read()
