@@ -38,9 +38,10 @@ ics-validate      = "ics_validator:main"
 ics-analyze       = "ics_token_analyzer:main"
 ics-live-test     = "ics_live_test:main"
 ics-quality-bench = "ics_quality_bench:main"
+ics-lint          = "ics_linter:main"
 
 [tool.setuptools]
-py-modules = ["ics_validator", "ics_token_analyzer", "ics_live_test", "ics_quality_bench", "ics_sdk", "ics_constraint_parser"]
+py-modules = ["ics_validator", "ics_token_analyzer", "ics_live_test", "ics_quality_bench", "ics_sdk", "ics_constraint_parser", "ics_linter"]
 
 [project.urls]
 Repository = "https://github.com/rahuljaiswal1808/ics-spec"
