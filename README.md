@@ -91,45 +91,11 @@ ics-live-test my_instruction.txt --invocations 5   # requires ANTHROPIC_API_KEY
 
 ## Tools
 
-The ICS toolchain covers the full document lifecycle: scaffolding → editing → validation → linting → diffing → CI reporting.
-
-| Module | CLI command | Purpose |
-|--------|-------------|---------|
-| `ics_validator.py` | `ics-validate` | Structural compliance — checks all spec rules, reports violations |
-| `ics_token_analyzer.py` | `ics-analyze` | Token analyzer — proves §2.2/§2.4 savings claim offline |
-| `ics_live_test.py` | `ics-live-test` | Live tester — validates savings with real Anthropic API calls |
-| `ics_quality_bench.py` | `ics-quality-bench` | Quality benchmark — runs 20 ICS scenarios, scores outputs |
-| `ics_constraint_parser.py` | *(library)* | Parses `CAPABILITY_DECLARATION` and `OUTPUT_CONTRACT` into typed structures |
-| `ics_linter.py` | `ics-lint` | Semantic linter — catches anti-patterns beyond structural validity (9 rules) |
-| `ics_scaffold.py` | `ics-scaffold` | Document scaffolder — generates a skeleton ICS file with all five layers |
-| `ics_diff.py` | `ics-diff` | Layer-aware diff — shows per-layer changes between two ICS revisions |
-| `ics_report.py` | `ics-report` | **CI aggregate reporter** — validate + lint across N files; outputs console/JSON/Markdown |
-| `ics_sdk.py` | *(library)* | Python SDK — programmatic document assembly and runtime injection |
-
-See [`TOOLCHAIN.md`](TOOLCHAIN.md) for a full guide to every tool, their options, and how they compose in CI pipelines.
-
-### Quick start: validate a file
-
-```bash
-pip install .
-ics-validate my_instruction.ics
-```
-
-### Quick start: CI report across a directory
-
-```bash
-# Console summary — exit 0 if all pass, exit 1 if any fail
-ics-report prompts/*.ics
-
-# JSON output for downstream tooling
-ics-report prompts/*.ics --format json > report.json
-
-# Markdown suitable for a PR comment
-ics-report prompts/*.ics --format markdown
-
-# Treat warnings as failures
-ics-report prompts/*.ics --strict
-```
+| File | Purpose |
+|------|---------|
+| `ics_validator.py` | Reference validator — checks ICS compliance, reports violations |
+| `ics_token_analyzer.py` | Token analyzer — proves §2.2/§2.4 savings claim offline (no API key needed) |
+| `ics_live_test.py` | Live tester — validates savings with real Anthropic API calls using your key |
 
 ### Quick start: live token test
 
