@@ -32,9 +32,9 @@ class AnthropicProvider(ProviderBase):
             ) from exc
 
         self.model = model
-        self._client = _anthropic.AsyncAnthropic(api_key=api_key)
+        self._client = _anthropic.Anthropic(api_key=api_key)
 
-    async def complete(
+    def complete(
         self,
         *,
         system_blocks: list[dict],
@@ -58,7 +58,7 @@ class AnthropicProvider(ProviderBase):
         if tools:
             kwargs["tools"] = tools
 
-        response = await self._client.messages.create(**kwargs)
+        response = self._client.messages.create(**kwargs)
 
         # Extract text from content blocks
         text_parts: list[str] = []

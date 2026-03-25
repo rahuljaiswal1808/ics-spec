@@ -52,7 +52,7 @@ class ProviderBase(abc.ABC):
     model: str  # must be set by subclass
 
     @abc.abstractmethod
-    async def complete(
+    def complete(
         self,
         *,
         system_blocks: list[dict],   # Pre-formatted system content blocks (with cache_control)

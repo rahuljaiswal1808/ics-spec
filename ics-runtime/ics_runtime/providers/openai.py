@@ -23,7 +23,7 @@ class OpenAIProvider(ProviderBase):
     ) -> None:
         try:
             import openai as _openai
-            if not hasattr(_openai, "AsyncOpenAI"):
+            if not hasattr(_openai, "OpenAI"):
                 raise ImportError("openai v0.x detected. Run: pip install --upgrade 'openai>=1.0'")
         except ImportError as exc:
             raise ImportError(
@@ -32,9 +32,9 @@ class OpenAIProvider(ProviderBase):
 
         self.model = model
         import openai as _openai
-        self._client = _openai.AsyncOpenAI(api_key=api_key)
+        self._client = _openai.OpenAI(api_key=api_key)
 
-    async def complete(
+    def complete(
         self,
         *,
         system_blocks: list[dict],
@@ -87,7 +87,7 @@ class OpenAIProvider(ProviderBase):
         if oai_tools:
             kwargs["tools"] = oai_tools
 
-        response = await self._client.chat.completions.create(**kwargs)
+        response = self._client.chat.completions.create(**kwargs)
         choice = response.choices[0]
         msg = choice.message
 
