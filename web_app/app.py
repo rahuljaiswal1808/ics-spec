@@ -503,7 +503,6 @@ async def api_benchmark(req: BenchmarkRequest):
                 max_tokens=1,
                 system=system_parts,
                 messages=[{"role": "user", "content": scenario["task"]}],
-                betas=["prompt-caching-2024-07-31"],
             )
             u = resp.usage
             inp          = u.input_tokens
@@ -627,7 +626,6 @@ async def api_chat_stream(
                 max_tokens=1024,
                 system=system_parts,
                 messages=[{"role": "user", "content": message}],
-                betas=["prompt-caching-2024-07-31"],
             ) as stream:
                 for text in stream.text_stream:
                     q.put({"type": "text", "text": text})
