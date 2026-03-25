@@ -15,11 +15,13 @@ Run:
 
 import asyncio
 import json
+import logging
 import os
 import sys
 import textwrap
 import threading
 import queue as Q
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -36,6 +38,32 @@ sys.path.insert(0, str(ROOT))
 import ics_prompt as ics
 from ics_autoclassifier import ICSAutoClassifier, to_ics, to_report
 from ics_validator import validate as ics_validate
+
+
+# ── Log bus (in-memory ring buffer + live SSE subscribers) ────────────────────
+
+_LOG_HISTORY: deque = deque(maxlen=500)        # keep last 500 lines for new connections
+_LOG_SUBSCRIBERS: list[Q.Queue] = []           # one queue per open /api/logs connection
+_LOG_LOCK = threading.Lock()
+
+
+def _emit(level: str, msg: str) -> None:
+    """Append a log entry to history and fan-out to all SSE subscribers."""
+    entry = {
+        "ts":    datetime.now(timezone.utc).strftime("%H:%M:%S.%f")[:-3],
+        "level": level,
+        "msg":   msg,
+    }
+    with _LOG_LOCK:
+        _LOG_HISTORY.append(entry)
+        for q in _LOG_SUBSCRIBERS:
+            q.put_nowait(entry)
+
+
+def log_info(msg: str)  -> None: _emit("INFO",  msg); logging.info(msg)
+def log_warn(msg: str)  -> None: _emit("WARN",  msg); logging.warning(msg)
+def log_error(msg: str) -> None: _emit("ERROR", msg); logging.error(msg)
+def log_debug(msg: str) -> None: _emit("DEBUG", msg); logging.debug(msg)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -646,19 +674,39 @@ async def api_benchmark(req: BenchmarkRequest):
     stable_blocks  = [b for b in blocks if b.cache_eligible]
     dynamic_blocks = [b for b in blocks if not b.cache_eligible]
 
+    log_info(f"[benchmark] scenario={req.scenario_id}  n_calls={n_calls}")
+    log_info(f"[benchmark] stable blocks : {[b.layer.value for b in stable_blocks]}")
+    log_info(f"[benchmark] dynamic blocks: {[b.layer.value for b in dynamic_blocks]}")
+
     system_parts = []
     for i, block in enumerate(stable_blocks):
         part: dict = {"type": "text", "text": str(block)}
-        if i == len(stable_blocks) - 1:          # only mark the LAST stable block
+        is_last = (i == len(stable_blocks) - 1)
+        if is_last:
             part["cache_control"] = {"type": "ephemeral"}
+        tok = est_tokens(str(block))
+        log_info(f"[benchmark]   stable[{i}] layer={block.layer.value}  chars={len(str(block))}  est_tokens={tok}  cache_control={is_last}")
         system_parts.append(part)
+
+    cumulative = sum(est_tokens(str(b)) for b in stable_blocks)
+    log_info(f"[benchmark] cumulative stable tokens (est): {cumulative}  threshold: 1024")
+    if cumulative < 1024:
+        log_warn(f"[benchmark] WARNING: cumulative stable tokens {cumulative} < 1024 — caching will NOT trigger")
+    else:
+        log_info(f"[benchmark] cumulative stable tokens OK ({cumulative} >= 1024) — caching should trigger")
+
     for block in dynamic_blocks:
+        tok = est_tokens(str(block))
+        log_info(f"[benchmark]   dynamic  layer={block.layer.value}  chars={len(str(block))}  est_tokens={tok}")
         system_parts.append({"type": "text", "text": str(block)})
+
+    log_info(f"[benchmark] system_parts count: {len(system_parts)}")
 
     client = anthropic.Anthropic(api_key=api_key)
     per_call = []
 
     for i in range(n_calls):
+        log_info(f"[benchmark] → API call {i+1}/{n_calls} ...")
         try:
             resp = client.messages.create(
                 model="claude-haiku-4-5-20251001",  # cheapest model — we only need usage data
@@ -671,6 +719,16 @@ async def api_benchmark(req: BenchmarkRequest):
             cache_create = getattr(u, "cache_creation_input_tokens", 0) or 0
             cache_read   = getattr(u, "cache_read_input_tokens",    0) or 0
             out          = u.output_tokens
+            log_info(
+                f"[benchmark] ← call {i+1} usage: input={inp}  "
+                f"cache_write={cache_create}  cache_read={cache_read}  output={out}"
+            )
+            if cache_create == 0 and cache_read == 0:
+                log_warn(f"[benchmark]   ⚠ call {i+1}: no cache activity — check token counts above")
+            elif cache_create > 0:
+                log_info(f"[benchmark]   ✓ call {i+1}: cache WRITTEN ({cache_create} tokens)")
+            elif cache_read > 0:
+                log_info(f"[benchmark]   ✓ call {i+1}: cache HIT ({cache_read} tokens read)")
             per_call.append({
                 "call":          i + 1,
                 "input_tokens":        inp,
@@ -681,6 +739,7 @@ async def api_benchmark(req: BenchmarkRequest):
                 "cache_hit":           cache_read > 0,
             })
         except Exception as exc:
+            log_error(f"[benchmark] ✗ call {i+1} FAILED: {exc}")
             per_call.append({
                 "call":    i + 1,
                 "error":   str(exc),
@@ -772,6 +831,40 @@ async def api_benchmark(req: BenchmarkRequest):
         }
 
     return {"per_call": per_call, "summary": summary}
+
+
+@app.get("/api/logs")
+async def api_logs():
+    """SSE stream of server log entries. Replays history then streams live."""
+    q: Q.Queue = Q.Queue()
+    with _LOG_LOCK:
+        history = list(_LOG_HISTORY)
+        _LOG_SUBSCRIBERS.append(q)
+
+    async def _generate():
+        # replay history so the console is populated on connect
+        for entry in history:
+            yield f"data: {json.dumps(entry)}\n\n"
+        # stream live entries
+        try:
+            while True:
+                try:
+                    entry = await asyncio.to_thread(q.get, timeout=30)
+                    yield f"data: {json.dumps(entry)}\n\n"
+                except Exception:
+                    yield "data: {\"ts\":\"\",\"level\":\"PING\",\"msg\":\"\"}\n\n"
+        finally:
+            with _LOG_LOCK:
+                try:
+                    _LOG_SUBSCRIBERS.remove(q)
+                except ValueError:
+                    pass
+
+    return StreamingResponse(
+        _generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/api/chat/stream")

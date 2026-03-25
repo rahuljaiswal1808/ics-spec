@@ -370,6 +370,11 @@
     <button onclick="showTab('chat', this)">
       <span class="icon">💬</span> Chat
     </button>
+    <button onclick="showTab('console', this)" id="nav-console">
+      <span class="icon">🖥️</span> Console
+      <span id="console-badge" style="display:none;margin-left:4px;background:var(--danger);
+        color:#fff;font-size:10px;padding:1px 5px;border-radius:8px;">!</span>
+    </button>
   </nav>
 
   <main>
@@ -553,6 +558,47 @@
           Shift+Enter for newline · Enter to send
         </div>
       </div>
+    </div>
+
+    <!-- ══════════════ CONSOLE ══════════════ -->
+    <div id="tab-console" class="tab-panel">
+      <h2>Server Console</h2>
+      <p class="subtitle">Live server logs streamed from the backend — useful for debugging benchmark and API calls.</p>
+
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
+        <button class="btn secondary" onclick="clearConsole()">Clear</button>
+        <button class="btn secondary" onclick="copyConsole()">Copy all</button>
+        <div style="display:flex;align-items:center;gap:6px;margin-left:auto;font-size:12px;">
+          <span class="dot" id="console-dot" style="background:var(--muted);"></span>
+          <span id="console-status">disconnected</span>
+        </div>
+        <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:12px;cursor:pointer;">
+          <input type="checkbox" id="console-autoscroll" checked> Auto-scroll
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:12px;cursor:pointer;">
+          Filter:
+          <select id="console-filter" style="width:90px;padding:4px 6px;font-size:12px;">
+            <option value="ALL">ALL</option>
+            <option value="INFO">INFO</option>
+            <option value="WARN">WARN</option>
+            <option value="ERROR">ERROR</option>
+            <option value="DEBUG">DEBUG</option>
+          </select>
+        </label>
+      </div>
+
+      <div id="console-output" style="
+        background:var(--code-bg);
+        border:1px solid var(--border);
+        border-radius:var(--radius);
+        padding:10px 12px;
+        height:calc(100vh - 260px);
+        min-height:300px;
+        overflow-y:auto;
+        font-family:'JetBrains Mono','Fira Code',monospace;
+        font-size:12px;
+        line-height:1.7;
+      "></div>
     </div>
 
   </main>
@@ -1333,6 +1379,106 @@ function appendMsg(role, content) {
   msgs.scrollTop = 9999;
   return el;
 }
+
+// ── CONSOLE ─────────────────────────────────────────────────────────────────
+let consoleES = null;
+let consoleEntries = [];
+
+const LEVEL_COLOR = {
+  INFO:  '#a9b1d6',
+  WARN:  '#fbbf24',
+  ERROR: '#f87171',
+  DEBUG: '#64748b',
+  PING:  null,  // hidden
+};
+
+function startConsole() {
+  if (consoleES) return;
+  consoleES = new EventSource('/api/logs');
+  const dot    = document.getElementById('console-dot');
+  const status = document.getElementById('console-status');
+
+  consoleES.onopen = () => {
+    dot.style.background = 'var(--accent2)';
+    status.textContent   = 'connected';
+  };
+  consoleES.onmessage = (e) => {
+    const entry = JSON.parse(e.data);
+    if (entry.level === 'PING') return;
+    consoleEntries.push(entry);
+    renderConsoleLine(entry);
+    // badge on nav if not on console tab
+    if (!document.getElementById('tab-console').classList.contains('active')) {
+      if (entry.level === 'ERROR' || entry.level === 'WARN') {
+        document.getElementById('console-badge').style.display = 'inline';
+      }
+    }
+  };
+  consoleES.onerror = () => {
+    dot.style.background = 'var(--danger)';
+    status.textContent   = 'disconnected — retrying…';
+  };
+}
+
+function renderConsoleLine(entry) {
+  const filter = document.getElementById('console-filter').value;
+  if (filter !== 'ALL' && entry.level !== filter) return;
+
+  const color = LEVEL_COLOR[entry.level] || '#a9b1d6';
+  const out   = document.getElementById('console-output');
+
+  const line = document.createElement('div');
+  line.dataset.level = entry.level;
+  line.innerHTML =
+    `<span style="color:var(--muted);user-select:none;">${escHtml(entry.ts)} </span>` +
+    `<span style="color:${color};font-weight:${entry.level==='ERROR'||entry.level==='WARN'?'700':'400'};">` +
+    `[${entry.level.padEnd(5)}] </span>` +
+    `<span style="color:${color};">${escHtml(entry.msg)}</span>`;
+  out.appendChild(line);
+
+  if (document.getElementById('console-autoscroll').checked) {
+    out.scrollTop = out.scrollHeight;
+  }
+}
+
+function redrawConsole() {
+  const out    = document.getElementById('console-output');
+  const filter = document.getElementById('console-filter').value;
+  out.innerHTML = '';
+  for (const entry of consoleEntries) {
+    if (filter === 'ALL' || entry.level === filter) renderConsoleLine(entry);
+  }
+  if (document.getElementById('console-autoscroll').checked) {
+    out.scrollTop = out.scrollHeight;
+  }
+}
+
+document.getElementById('console-filter').addEventListener('change', redrawConsole);
+
+function clearConsole() {
+  consoleEntries = [];
+  document.getElementById('console-output').innerHTML = '';
+}
+
+function copyConsole() {
+  const text = consoleEntries
+    .map(e => `${e.ts} [${e.level}] ${e.msg}`)
+    .join('\n');
+  copyText(text);
+}
+
+// Clear badge when user opens console tab
+const _origShowTab = showTab;
+// patch showTab to clear badge
+function showTab(name, btn) {
+  _origShowTab(name, btn);
+  if (name === 'console') {
+    document.getElementById('console-badge').style.display = 'none';
+  }
+}
+
+// Start SSE log stream immediately
+startConsole();
 
 // ── Utilities ───────────────────────────────────────────────────────────────
 function escHtml(s) {
