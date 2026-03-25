@@ -1083,6 +1083,27 @@ async function runBenchmark() {
 function renderBenchmarkResult(d) {
   const s = d.summary;
 
+  // ── Cache warning banner ─────────────────────────────────────────────────
+  const warnBanner = s && s.cache_warning ? `
+    <div style="border:1px solid var(--warn);border-radius:var(--radius);padding:14px 16px;
+                background:rgba(245,158,11,.08);margin-bottom:16px;">
+      <div style="font-weight:700;color:var(--warn);margin-bottom:6px;">
+        ⚠️ Caching not triggered — prompt too small
+      </div>
+      <div style="font-size:12px;line-height:1.7;">
+        ${escHtml(s.cache_warning)}
+      </div>
+      <div style="margin-top:10px;font-size:12px;">
+        <strong>Why?</strong> Anthropic requires a minimum of
+        <strong>${s.cache_threshold} tokens</strong> in a cacheable block.
+        This scenario's stable layers are only
+        <strong>~${s.cacheable_est_tokens} tokens</strong> — below the threshold.<br>
+        <strong>Fix:</strong> Select
+        <strong>🏦 Orion DevAssist (Full — benchmark)</strong> from the scenario list
+        and run again to see real cache hits.
+      </div>
+    </div>` : '';
+
   // ── Per-call table ────────────────────────────────────────────────────────
   const callRows = d.per_call.map(c => {
     if (c.error) return `
@@ -1133,7 +1154,7 @@ function renderBenchmarkResult(d) {
       </table>
     </div>`;
 
-  if (!s || !s.real_total_tokens) return `
+  if (!s || !s.real_total_tokens) return warnBanner + `
     <div class="card" style="border-color:var(--accent2);">
       <div class="card-title" style="margin-bottom:8px;">Real Benchmark Results</div>
       ${perCallSection}
@@ -1227,7 +1248,7 @@ function renderBenchmarkResult(d) {
       </table>
     </div>`;
 
-  return `
+  return warnBanner + `
     <div style="border:1px solid var(--accent2);border-radius:var(--radius);padding:16px;margin-bottom:4px;
                 background:rgba(0,212,170,.04);">
       <div style="font-size:13px;font-weight:700;color:var(--accent2);margin-bottom:16px;">

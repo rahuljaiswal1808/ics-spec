@@ -112,6 +112,145 @@ def build_task(msg: str) -> str:
     return f"The developer asks: {msg}"
 
 
+# ── Large benchmark scenario (>1024 tokens in stable layers to trigger real caching) ──
+
+LARGE_IMMUTABLE = ics.immutable("""
+    System: Orion B2B Payments Platform
+    Version: 4.2.1
+    Language: Python 3.12
+    Runtime: AWS Lambda (arm64) + PostgreSQL 15 (RDS Multi-AZ) + Redis 7 (ElastiCache cluster)
+    Message queue: Amazon SQS (standard + FIFO) + SNS fan-out
+    Observability: OpenTelemetry → Datadog (traces, metrics, logs)
+    Secret management: HashiCorp Vault (AppRole auth)
+    CI/CD: GitHub Actions → ECR → Lambda via AWS CDK
+
+    ── Repository layout ────────────────────────────────────────────────────────
+    src/
+      ledger/
+        __init__.py          — public API: post_entry(), get_balance(), get_ledger()
+        models.py            — LedgerEntry, Account, JournalEntry SQLAlchemy models
+        service.py           — double-entry posting logic, idempotency via entry_key
+        queries.py           — parameterised read queries, cursor-based pagination
+      rails/
+        __init__.py          — RailAdapter protocol + registry
+        ach/
+          adapter.py         — ACH rail: NACHA file generation, R-code handling
+          idempotency.py     — Redis-based idempotency keys (TTL 72 h)
+          retry.py           — exponential backoff, NOC/return handling
+        swift/
+          adapter.py         — SWIFT MT103/MT202, UETR generation
+          gpi.py             — g4C tracker integration
+        sepa/
+          adapter.py         — SEPA Credit Transfer (SCT) + Instant (SCT Inst)
+          pain008.py         — ISO 20022 pain.008 XML generation
+        rtp/
+          adapter.py         — RTP (The Clearing House) connector
+          connector.py       — TCH production + sandbox endpoints
+      gateway/
+        v2/
+          routes.py          — stable v2 REST endpoints (frozen — no breaking changes)
+          auth.py            — HMAC-SHA256 request signing, API key rotation
+          rate_limit.py      — per-tenant token bucket (Redis INCR + EXPIRE)
+        v3/
+          routes.py          — v3 in development; feature-flagged, not GA
+          openapi.py         — auto-generated OpenAPI 3.1 spec
+      compliance/
+        aml.py               — transaction monitoring rules, SAR flagging
+        ofac.py              — OFAC SDN list screening (nightly refresh from OFAC API)
+        kyc.py               — KYC status checks via Persona integration
+        audit.py             — immutable audit log (append-only, S3 + Athena)
+      settlement/
+        netting.py           — end-of-day multilateral netting engine
+        reconciliation.py    — nostro/vostro position reconciliation
+        reports.py           — settlement reports (CSV + PDF) for operations team
+    infra/
+      cdk/                   — AWS CDK stacks (TypeScript); changes require infra review
+      migrations/            — Alembic migration scripts; auto-generated via alembic revision
+    tests/
+      unit/                  — pytest, 100% coverage required for src/ledger and src/rails
+      integration/           — LocalStack-based AWS service mocks
+      e2e/                   — staging environment, real bank sandbox credentials
+
+    ── Core data model ──────────────────────────────────────────────────────────
+    Payment
+      id            UUID primary key
+      tenant_id     UUID foreign key → tenants.id
+      rail          ENUM: ACH | SWIFT | SEPA | RTP
+      status        ENUM: PENDING → SUBMITTED → CLEARING → SETTLED | FAILED | RETURNED
+      amount        BIGINT (integer cents, always)
+      currency      CHAR(3) ISO 4217
+      entry_key     TEXT UNIQUE (idempotency — caller-supplied or auto-generated)
+      created_at    TIMESTAMPTZ
+      settled_at    TIMESTAMPTZ nullable
+      metadata      JSONB (rail-specific fields, e.g. UETR for SWIFT)
+
+    LedgerEntry
+      id            UUID
+      payment_id    UUID foreign key → payments.id
+      account_id    UUID foreign key → accounts.id
+      entry_type    ENUM: DEBIT | CREDIT
+      amount        BIGINT
+      posted_at     TIMESTAMPTZ
+      entry_key     TEXT UNIQUE (must match parent Payment.entry_key)
+
+    Account
+      id            UUID
+      tenant_id     UUID
+      account_type  ENUM: OPERATING | SETTLEMENT | FEE | SUSPENSE
+      currency      CHAR(3)
+      balance       BIGINT (derived — never store directly; computed from ledger entries)
+
+    ── Architectural invariants ─────────────────────────────────────────────────
+      — All database queries MUST use parameterised statements (SQLAlchemy ORM or text() with bindparams).
+        SQL string interpolation or f-strings in queries are a critical violation.
+      — Secrets (DB passwords, API keys, Vault tokens) MUST be retrieved via vault.Get(path).
+        os.Getenv() and os.environ are prohibited for secrets. Use config.py for non-secret env vars.
+      — All exported functions and public methods MUST have docstrings and full type annotations.
+      — Async functions MUST NOT contain synchronous blocking I/O (no requests, no psycopg2 directly).
+        Use asyncpg or SQLAlchemy async session; use httpx.AsyncClient for HTTP.
+      — Monetary values are ALWAYS integer cents (BIGINT). Float arithmetic on money is a critical violation.
+      — All Payment status transitions must go through ledger.service.post_entry(); direct ORM updates
+        to Payment.status are prohibited.
+      — idempotency: every write operation must accept and honour an entry_key; duplicate entry_keys
+        must return the original result without re-executing the operation.
+      — Compliance screening (OFAC) must be invoked before any Payment leaves PENDING status.
+        Skipping compliance checks is a critical violation.
+""")
+
+LARGE_CAPABILITIES = ics.capability("""
+    ALLOW  answering questions about codebase architecture, data models, and design decisions
+    ALLOW  explaining existing code within any src/ module
+    ALLOW  suggesting code changes within src/ or tests/ with full type annotations and docstrings
+    ALLOW  generating Alembic migration scripts within infra/migrations/
+    ALLOW  explaining payment rail behaviour (ACH, SWIFT, SEPA, RTP) and their failure modes
+    ALLOW  advising on idempotency patterns, retry logic, and distributed transaction safety
+    ALLOW  explaining compliance requirements (OFAC, AML, KYC) in the context of this codebase
+    DENY   suggesting changes to infra/cdk/ without explicit user confirmation and infra team review
+    DENY   providing any advice that introduces SQL string interpolation or f-string queries
+    DENY   providing any advice that uses os.Getenv() or os.environ for secret retrieval
+    DENY   suggesting direct ORM updates to Payment.status (must go through ledger.service)
+    DENY   suggesting float arithmetic for monetary amounts
+    DENY   suggesting any code that bypasses compliance.ofac screening
+    REQUIRE citing the specific module path (e.g. src/rails/ach/idempotency.py) for every code reference
+    REQUIRE flagging any suggestion that modifies Payment state-machine transitions as HIGH RISK
+    REQUIRE flagging any suggestion that touches compliance/ as requiring compliance team review
+    REQUIRE all suggested code to include type annotations and a one-line docstring minimum
+""")
+
+LARGE_OUTPUT = ics.output_contract("""
+    format:   structured markdown
+    schema:
+      1. One-sentence headline summarising the answer
+      2. Context paragraph (why this matters in the Orion platform)
+      3. Implementation section with fenced code blocks (Python 3.12, fully typed)
+      4. Caveats / risks section (flag state-machine or compliance impacts if relevant)
+      5. References: list of src/ module paths relevant to the answer
+    variance:
+      — Sections 3–4 MAY be omitted for purely conceptual questions
+      — Code blocks MUST include import statements
+    on_failure: "BLOCKED: <one-sentence reason>" and nothing else
+""")
+
 # ── Scenario data ─────────────────────────────────────────────────────────────
 
 SCENARIOS: dict[str, dict] = {
@@ -200,6 +339,18 @@ SCENARIOS: dict[str, dict] = {
             variance: 'Sources:' MAY be omitted when answer is from a single inline citation
             on_failure: "Insufficient information in retrieved context to answer this."
             """),
+    },
+    "payments-large": {
+        "id":          "payments-large",
+        "name":        "Orion DevAssist (Full — benchmark)",
+        "description": "Full production-scale prompt — stable layers exceed 1024 tokens to demonstrate real API caching",
+        "icon":        "🏦",
+        "immutable":   LARGE_IMMUTABLE.content,
+        "capability":  LARGE_CAPABILITIES.content,
+        "session":     {"topics":    ["ACH idempotency design", "NACHA file retry logic"],
+                        "decisions": ["use Redis entry_key with 72h TTL", "R03/R04 returns trigger automatic retry"]},
+        "task":        "How should I implement idempotency for ACH payment submissions to handle duplicate requests safely?",
+        "output":      LARGE_OUTPUT.content,
     },
 }
 
@@ -527,6 +678,13 @@ async def api_benchmark(req: BenchmarkRequest):
     # Derive ground-truth summary from call 1
     first = per_call[0] if per_call and "error" not in per_call[0] else None
     summary = {}
+
+    # Detect whether caching was actually triggered across any call
+    any_cache_write = any(c.get("cache_creation", 0) > 0 for c in per_call if "error" not in c)
+    any_cache_read  = any(c.get("cache_read",     0) > 0 for c in per_call if "error" not in c)
+    cacheable_est   = sum(est_tokens(str(b)) for b in blocks if b.cache_eligible)
+    cache_threshold = 1024  # Anthropic minimum tokens to cache a block
+
     if first:
         real_total   = first["input_tokens"] + first["cache_creation"]
         real_dynamic = first["input_tokens"]   # non-cached portion
@@ -565,6 +723,21 @@ async def api_benchmark(req: BenchmarkRequest):
                 "pct":        pct,
             })
 
+        cache_warning = None
+        if not any_cache_write:
+            cache_warning = (
+                f"Caching was NOT triggered. Anthropic requires a minimum of {cache_threshold} tokens "
+                f"in a cacheable block. This scenario's stable layers are only ~{cacheable_est} tokens "
+                f"(estimated). Use the 'Orion DevAssist (Full — benchmark)' scenario which has "
+                f"1024+ tokens in stable layers to see real cache hits."
+            )
+        elif any_cache_write and not any_cache_read:
+            cache_warning = (
+                "Cache was written on call 1 but no cache reads were observed. "
+                "Calls may have been too far apart (cache TTL is 5 minutes), or the scenario "
+                "is at the edge of the minimum token threshold."
+            )
+
         summary = {
             "real_total_tokens":   real_total,
             "real_dynamic_tokens": real_dynamic,
@@ -574,6 +747,9 @@ async def api_benchmark(req: BenchmarkRequest):
             "estimate_error_pct":  round(abs(est_total - real_total) / real_total * 100, 1) if real_total else None,
             "price_model":         "claude-haiku-4-5-20251001 — input $0.80/MTok, cache_write $1.00/MTok, cache_read $0.08/MTok",
             "cost_savings":        calls_data,
+            "cache_warning":       cache_warning,
+            "cache_threshold":     cache_threshold,
+            "cacheable_est_tokens": cacheable_est,
         }
 
     return {"per_call": per_call, "summary": summary}
