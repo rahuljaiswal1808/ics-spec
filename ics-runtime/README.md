@@ -1,6 +1,6 @@
 # ICS Runtime
 
-Production execution layer for [ICS (Intelligent Context Structuring)](https://github.com/rahuljaiswal1808/ics-spec) prompts.
+Production execution layer for [ICS (IInstruction Contract Specification)](https://github.com/rahuljaiswal1808/ics-spec) prompts.
 
 ICS Runtime sits **on top of** the ICS spec and handles everything the spec intentionally leaves out:
 LLM calling, prompt caching, tool contracts, session persistence, capability enforcement, and observability.
