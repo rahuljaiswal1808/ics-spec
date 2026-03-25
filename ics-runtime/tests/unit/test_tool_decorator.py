@@ -43,7 +43,9 @@ def test_registry_anthropic_tools_format():
     reg = ToolRegistry([lookup_lead])
     tools = reg.to_anthropic_tools()
     assert len(tools) == 1
-    assert tools[0]["name"] == "crm.lookup"
+    # Anthropic also requires ^[a-zA-Z0-9_-]+$ — dots are sanitized
+    assert "." not in tools[0]["name"]
+    assert "crm" in tools[0]["name"]
     assert "input_schema" in tools[0]
 
 
