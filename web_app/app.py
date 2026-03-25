@@ -35,6 +35,25 @@ from pydantic import BaseModel
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
+# ── .env file loader (optional — keys can also be passed as env vars) ─────────
+def _load_dotenv() -> None:
+    """Load KEY=VALUE pairs from .env in the repo root into os.environ.
+    Existing env vars take priority — this never overwrites them."""
+    env_file = ROOT / ".env"
+    if not env_file.exists():
+        return
+    for raw in env_file.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        val = val.strip().strip('"').strip("'")
+        if key and key not in os.environ:
+            os.environ[key] = val
+
+_load_dotenv()
+
 import ics_prompt as ics
 from ics_autoclassifier import ICSAutoClassifier, to_ics, to_report
 from ics_validator import validate as ics_validate
@@ -669,7 +688,7 @@ async def api_status():
     try:
         import openai as _o  # noqa: F401
         openai_ok = hasattr(_o, "OpenAI")  # False for old v0.x SDK
-        openai_version = getattr(_o, "version", getattr(_o, "__version__", "unknown"))
+        openai_version = getattr(_o, "__version__", "unknown")  # .version is a module in v0.x
     except ImportError:
         openai_ok = False
         openai_version = None
