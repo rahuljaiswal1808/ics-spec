@@ -668,14 +668,17 @@ async def api_status():
         anthropic_ok = False
     try:
         import openai as _o  # noqa: F401
-        openai_ok = True
+        openai_ok = hasattr(_o, "OpenAI")  # False for old v0.x SDK
+        openai_version = getattr(_o, "version", getattr(_o, "__version__", "unknown"))
     except ImportError:
         openai_ok = False
+        openai_version = None
     return {
         "anthropic_installed": anthropic_ok,
         "api_key_set":         bool(os.environ.get("ANTHROPIC_API_KEY")),
         "openai_installed":    openai_ok,
         "openai_key_set":      bool(os.environ.get("OPENAI_API_KEY")),
+        "openai_version":      openai_version,
     }
 
 
@@ -979,6 +982,10 @@ async def api_benchmark(req: BenchmarkRequest):
         import openai
     except ImportError:
         raise HTTPException(400, "openai package not installed. Run: pip install openai")
+    if not hasattr(openai, "OpenAI"):
+        raise HTTPException(400,
+            "openai package is outdated (v0.x detected). "
+            "Run: pip install --upgrade 'openai>=1.0'")
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         raise HTTPException(400, "OPENAI_API_KEY is not set")
@@ -1142,6 +1149,11 @@ async def api_chat_stream(
                 import openai
             except ImportError:
                 q.put({"type": "error", "message": "openai not installed. Run: pip install openai"})
+                q.put(None)
+                return
+            if not hasattr(openai, "OpenAI"):
+                q.put({"type": "error", "message":
+                    "openai package is outdated (v0.x). Run: pip install --upgrade 'openai>=1.0'"})
                 q.put(None)
                 return
             api_key = os.environ.get("OPENAI_API_KEY")

@@ -703,17 +703,32 @@ async function checkStatus() {
 
 function onProviderChange() {
   const provider = document.getElementById('bench-provider').value;
-  const hasKey = provider === 'openai' ? _status.openai_key_set : _status.api_key_set;
-  const noKeyEl = document.getElementById('bench-no-key');
+  const noKeyEl  = document.getElementById('bench-no-key');
   const benchBtn = document.getElementById('bench-btn');
-  noKeyEl.style.display = hasKey ? 'none' : 'block';
-  benchBtn.disabled = !hasKey;
-  // update model hint
-  const descEl = document.getElementById('bench-desc');
+
   if (provider === 'openai') {
-    descEl.innerHTML = 'Makes actual OpenAI API calls. Uses <code>gpt-4o-mini</code> with <code>max_tokens=1</code>. Caching is automatic — no markup needed. Cost ~$0.000015 per run.';
+    const installed = _status.openai_installed;   // false when v0.x or missing
+    const hasKey    = _status.openai_key_set;
+    const version   = _status.openai_version;
+    if (installed === false && version) {
+      // Package exists but is old v0.x
+      noKeyEl.innerHTML = `⚠️ openai SDK is outdated (v${version} detected). Run: <code>pip install --upgrade "openai>=1.0"</code>`;
+      noKeyEl.style.display = 'block';
+      benchBtn.disabled = true;
+    } else {
+      noKeyEl.innerHTML = '⚠️ No OPENAI_API_KEY — restart with the key set to enable this.';
+      noKeyEl.style.display = hasKey ? 'none' : 'block';
+      benchBtn.disabled = !hasKey;
+    }
+    document.getElementById('bench-desc').innerHTML =
+      'Makes actual OpenAI API calls. Uses <code>gpt-4o-mini</code> with <code>max_tokens=1</code>. Caching is automatic — no markup needed. Cost ~$0.000015 per run.';
   } else {
-    descEl.innerHTML = 'Makes actual Anthropic API calls. Uses <code>claude-haiku-4-5-20251001</code> with <code>max_tokens=1</code>. Cost ~$0.0001 per run.';
+    const hasKey = _status.api_key_set;
+    noKeyEl.innerHTML = '⚠️ No ANTHROPIC_API_KEY — restart with the key set to enable this.';
+    noKeyEl.style.display = hasKey ? 'none' : 'block';
+    benchBtn.disabled = !hasKey;
+    document.getElementById('bench-desc').innerHTML =
+      'Makes actual Anthropic API calls. Uses <code>claude-haiku-4-5-20251001</code> with <code>max_tokens=1</code>. Cost ~$0.0001 per run.';
   }
 }
 
