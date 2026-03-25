@@ -59,7 +59,6 @@ class RedisBackend(SessionBackend):
                 "redis package required. Run: pip install 'ics-runtime[redis]'"
             ) from exc
 
-        import redis as _redis
         self._client = _redis.Redis.from_url(url, decode_responses=True)
         self._ttl = ttl
         self._prefix = prefix

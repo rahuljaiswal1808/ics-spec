@@ -12,6 +12,7 @@ class ProviderMessage:
     """A single message in a conversation turn."""
     role: str  # "user" or "assistant"
     content: str | list[dict]  # str for simple text; list for tool_use/tool_result blocks
+    tool_calls: list[dict] | None = None  # normalized tool calls for OpenAI assistant messages
 
 
 @dataclass

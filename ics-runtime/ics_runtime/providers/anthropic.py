@@ -21,7 +21,7 @@ class AnthropicProvider(ProviderBase):
 
     def __init__(
         self,
-        model: str = "claude-3-5-sonnet-20241022",
+        model: str = "claude-sonnet-4-6",
         api_key: str | None = None,
     ) -> None:
         try:

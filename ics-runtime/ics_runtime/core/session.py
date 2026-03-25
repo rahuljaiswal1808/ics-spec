@@ -150,9 +150,12 @@ class Session:
                     content=assistant_tool_content,
                 ))
             elif agent._provider_name == "openai":
-                # OpenAI: one assistant message with tool_calls list
-                # (handled internally by provider; we re-send messages list)
-                pass  # OpenAI provider tracks internally via raw response
+                # OpenAI requires an assistant message with tool_calls before tool results
+                messages.append(ProviderMessage(
+                    role="assistant",
+                    content="",
+                    tool_calls=prov_response.tool_calls,
+                ))
 
             # Append tool results
             for tc, record in zip(prov_response.tool_calls, all_tool_calls[-len(prov_response.tool_calls):]):

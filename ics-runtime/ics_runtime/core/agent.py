@@ -29,7 +29,7 @@ def _make_provider(provider: str, model: str, api_key: str | None, **kwargs: Any
 
 
 _DEFAULT_MODELS = {
-    "anthropic": "claude-3-5-sonnet-20241022",
+    "anthropic": "claude-sonnet-4-6",
     "openai": "gpt-4o",
 }
 
@@ -92,7 +92,7 @@ class Agent:
         self._provider_name = provider
         self._immutable = immutable or system
         self._capability = capability
-        self._model = model or _DEFAULT_MODELS.get(provider, "claude-3-5-sonnet-20241022")
+        self._model = model or _DEFAULT_MODELS.get(provider, "claude-sonnet-4-6")
         self._output_contract = output_contract
         self._backend: SessionBackend = session_backend or MemoryBackend()
 

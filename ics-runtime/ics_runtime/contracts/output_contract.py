@@ -132,7 +132,7 @@ class OutputContract:
 def _extract_json(text: str) -> str:
     """Extract JSON from a plain string or a markdown ```json ... ``` fence."""
     # Try to strip ```json ... ``` fences
-    m = re.search(r"```(?:json)?\s*(\{.*?\}|\[.*?\])\s*```", text, re.DOTALL)
+    m = re.search(r"```(?:json)?\s*(\{.*\}|\[.*\])\s*```", text, re.DOTALL)
     if m:
         return m.group(1)
     # Fall through: assume the whole text is JSON

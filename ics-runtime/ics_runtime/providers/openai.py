@@ -49,7 +49,21 @@ class OpenAIProvider(ProviderBase):
 
         sdk_messages: list[dict] = [{"role": "system", "content": system_text}]
         for m in messages:
-            if isinstance(m.content, str):
+            if m.tool_calls:
+                # Assistant message carrying tool calls — emit OpenAI format
+                oai_tc = [
+                    {
+                        "id": tc["id"],
+                        "type": "function",
+                        "function": {
+                            "name": tc["name"],
+                            "arguments": json.dumps(tc["input"]),
+                        },
+                    }
+                    for tc in m.tool_calls
+                ]
+                sdk_messages.append({"role": "assistant", "content": None, "tool_calls": oai_tc})
+            elif isinstance(m.content, str):
                 sdk_messages.append({"role": m.role, "content": m.content})
             else:
                 # tool result blocks → convert to OpenAI tool message format
@@ -60,9 +74,6 @@ class OpenAIProvider(ProviderBase):
                             "tool_call_id": block["tool_use_id"],
                             "content": block["content"],
                         })
-                    elif block.get("type") == "tool_use":
-                        # assistant message with tool call — handled below
-                        pass
 
         # Convert ICS tool schemas (Anthropic format) to OpenAI function format
         oai_tools: list[dict] | None = None

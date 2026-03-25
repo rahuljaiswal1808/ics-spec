@@ -8,9 +8,13 @@ from typing import Any, Callable
 from ics_runtime.tools.schema import ToolSchema
 
 
-def _sanitize_name(name: str) -> str:
-    """Both Anthropic and OpenAI require tool names matching ^[a-zA-Z0-9_-]{1,128}$.
-    Replace any disallowed character (e.g. dots) with double underscores."""
+def _sanitize_tool_name(name: str) -> str:
+    """Sanitize a tool name to match provider requirements (^[a-zA-Z0-9_-]+$).
+
+    Both Anthropic and OpenAI reject names containing dots or other special
+    characters.  Non-conforming characters are replaced with double underscores
+    so the mapping remains unambiguous and reversible via the name maps.
+    """
     return re.sub(r"[^a-zA-Z0-9_-]", "__", name)
 
 
@@ -26,8 +30,7 @@ class ToolRegistry:
     def __init__(self, tools: list[Callable]) -> None:
         self._tools: dict[str, Callable] = {}
         self._schemas: dict[str, ToolSchema] = {}
-        # Maps sanitized wire name -> original ICS name (same map works for both providers)
-        self._wire_name_map: dict[str, str] = {}
+        self._sanitized_name_map: dict[str, str] = {}  # sanitized_name -> ics_name
 
         for fn in tools:
             schema: ToolSchema | None = getattr(fn, "ics_tool_schema", None)
@@ -38,8 +41,8 @@ class ToolRegistry:
                 )
             self._tools[schema.name] = fn
             self._schemas[schema.name] = schema
-            wire_name = _sanitize_name(schema.name)
-            self._wire_name_map[wire_name] = schema.name
+            sanitized = _sanitize_tool_name(schema.name)
+            self._sanitized_name_map[sanitized] = schema.name
 
     # ------------------------------------------------------------------
     # Provider schema conversion
@@ -55,7 +58,7 @@ class ToolRegistry:
     def to_anthropic_tools(self) -> list[dict]:
         return [
             {
-                "name": _sanitize_name(s.name),
+                "name": _sanitize_tool_name(s.name),
                 "description": s.description,
                 "input_schema": s.input_json_schema,
             }
@@ -67,7 +70,7 @@ class ToolRegistry:
             {
                 "type": "function",
                 "function": {
-                    "name": _sanitize_name(s.name),
+                    "name": _sanitize_tool_name(s.name),
                     "description": s.description,
                     "parameters": s.input_json_schema,
                 },
@@ -90,8 +93,8 @@ class ToolRegistry:
         """
         from ics_runtime.exceptions import ToolDeniedError
 
-        # Resolve sanitized wire names (crm__lookup) back to ICS names (crm.lookup)
-        ics_name = self._wire_name_map.get(name, name)
+        # Resolve sanitized names (from either provider) back to ICS names
+        ics_name = self._sanitized_name_map.get(name, name)
 
         if ics_name not in self._tools:
             raise KeyError(f"Tool '{name}' is not registered in this agent.")
