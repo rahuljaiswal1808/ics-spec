@@ -1,0 +1,916 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ICS Demo — Orion DevAssist</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0f1117;
+      --surface:  #1a1d27;
+      --border:   #2a2d3e;
+      --accent:   #6c63ff;
+      --accent2:  #00d4aa;
+      --warn:     #f59e0b;
+      --danger:   #ef4444;
+      --text:     #e2e8f0;
+      --muted:    #64748b;
+      --code-bg:  #0d1117;
+      --radius:   8px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    header h1 { font-size: 18px; font-weight: 700; }
+    header .badge {
+      font-size: 11px;
+      background: var(--accent);
+      color: #fff;
+      padding: 2px 8px;
+      border-radius: 12px;
+    }
+    #api-status {
+      margin-left: auto;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    .dot.ok  { background: var(--accent2); }
+    .dot.bad { background: var(--danger); }
+
+    /* ── Layout ── */
+    .container { display: flex; height: calc(100vh - 57px); }
+
+    /* ── Sidebar tabs ── */
+    nav {
+      width: 180px;
+      flex-shrink: 0;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      padding: 16px 0;
+    }
+    nav button {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      padding: 10px 20px;
+      background: none;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      text-align: left;
+      transition: color .15s, background .15s;
+    }
+    nav button:hover  { color: var(--text); background: rgba(255,255,255,.04); }
+    nav button.active { color: var(--accent); background: rgba(108,99,255,.1); }
+    nav button .icon  { font-size: 16px; }
+
+    /* ── Main panel ── */
+    main { flex: 1; overflow-y: auto; padding: 24px; }
+
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    h2 { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+    .subtitle { color: var(--muted); font-size: 12px; margin-bottom: 20px; }
+
+    /* ── Form controls ── */
+    label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    select, textarea {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      padding: 8px 12px;
+      font-size: 13px;
+      outline: none;
+      transition: border-color .15s;
+    }
+    select:focus, textarea:focus { border-color: var(--accent); }
+    textarea { resize: vertical; font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+
+    .row { display: flex; gap: 12px; align-items: flex-end; margin-bottom: 16px; }
+    .row > * { flex: 1; }
+
+    button.btn {
+      padding: 8px 18px;
+      border: none;
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      background: var(--accent);
+      color: #fff;
+      transition: opacity .15s;
+      white-space: nowrap;
+    }
+    button.btn:hover   { opacity: .85; }
+    button.btn:disabled{ opacity: .4; cursor: not-allowed; }
+    button.btn.secondary {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+
+    /* ── Cards ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      margin-bottom: 12px;
+    }
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .card-title { font-weight: 600; font-size: 13px; }
+
+    /* ── Layer chips ── */
+    .chip {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 12px;
+      background: var(--border);
+      color: var(--muted);
+    }
+    .chip.immutable    { background: rgba(108,99,255,.2); color: #a89aff; }
+    .chip.capability   { background: rgba(0,212,170,.2);  color: #00d4aa; }
+    .chip.session      { background: rgba(245,158,11,.2); color: #fbbf24; }
+    .chip.dynamic      { background: rgba(239,68,68,.2);  color: #f87171; }
+    .chip.output_contract { background: rgba(96,165,250,.2); color: #93c5fd; }
+
+    /* ── Code block ── */
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px;
+      overflow-x: auto;
+      font-size: 12px;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #a9b1d6;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    /* ── Stats row ── */
+    .stats {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .stat {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 16px;
+      min-width: 110px;
+    }
+    .stat-value { font-size: 22px; font-weight: 700; color: var(--accent); }
+    .stat-label { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+    /* ── Violations / warnings ── */
+    .finding {
+      border-left: 3px solid var(--border);
+      padding: 8px 12px;
+      margin-bottom: 8px;
+      border-radius: 0 var(--radius) var(--radius) 0;
+      font-size: 12px;
+    }
+    .finding.critical { border-color: var(--danger); background: rgba(239,68,68,.07); }
+    .finding.warn     { border-color: var(--warn);   background: rgba(245,158,11,.07); }
+    .finding.ok       { border-color: var(--accent2); background: rgba(0,212,170,.07); }
+    .finding .rule    { font-weight: 600; margin-bottom: 2px; }
+    .finding .step    { color: var(--muted); font-size: 11px; }
+
+    /* ── Compare table ── */
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td {
+      padding: 8px 12px;
+      text-align: right;
+      border-bottom: 1px solid var(--border);
+    }
+    th { color: var(--muted); font-weight: 600; text-align: right; }
+    th:first-child, td:first-child { text-align: left; }
+    tr:last-child td { border-bottom: none; }
+    .saved { color: var(--accent2); font-weight: 600; }
+
+    /* ── Chat ── */
+    .chat-container {
+      display: flex;
+      flex-direction: column;
+      height: calc(100vh - 200px);
+      min-height: 400px;
+    }
+    #chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: 12px;
+    }
+    .msg { margin-bottom: 16px; }
+    .msg .role {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+    .msg.user .role  { color: var(--accent); }
+    .msg.assistant .role { color: var(--accent2); }
+    .msg .body {
+      background: var(--code-bg);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+      font-size: 13px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+    .msg.user .body { background: rgba(108,99,255,.12); }
+    .chat-input-row {
+      display: flex;
+      gap: 8px;
+    }
+    .chat-input-row textarea {
+      flex: 1;
+      min-height: 60px;
+    }
+    .chat-input-row button { align-self: flex-end; }
+    .usage-row {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 6px;
+    }
+
+    /* ── Spinner ── */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .6s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+
+    /* ── Empty state ── */
+    .empty {
+      text-align: center;
+      color: var(--muted);
+      padding: 40px;
+      font-size: 13px;
+    }
+
+    /* ── Scenario cards (build tab) ── */
+    .scenario-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    .scenario-card {
+      background: var(--surface);
+      border: 2px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+      cursor: pointer;
+      transition: border-color .15s;
+    }
+    .scenario-card:hover   { border-color: var(--muted); }
+    .scenario-card.selected{ border-color: var(--accent); }
+    .scenario-card .s-icon { font-size: 24px; margin-bottom: 6px; }
+    .scenario-card .s-name { font-weight: 600; font-size: 13px; margin-bottom: 3px; }
+    .scenario-card .s-desc { font-size: 11px; color: var(--muted); line-height: 1.4; }
+
+    /* ── Progress bar ── */
+    .progress-bar {
+      height: 6px;
+      background: var(--border);
+      border-radius: 3px;
+      overflow: hidden;
+      margin-top: 4px;
+    }
+    .progress-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 3px;
+      transition: width .3s;
+    }
+    .progress-fill.cached { background: var(--accent2); }
+
+    /* scrollbar */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <div style="font-size:20px">⚡</div>
+  <h1>ICS Demo</h1>
+  <span class="badge">v1.0</span>
+  <div id="api-status">
+    <span class="dot" id="api-dot"></span>
+    <span id="api-text">checking…</span>
+  </div>
+</header>
+
+<div class="container">
+  <nav>
+    <button class="active" onclick="showTab('build', this)">
+      <span class="icon">🏗️</span> Build
+    </button>
+    <button onclick="showTab('classify', this)">
+      <span class="icon">🔍</span> Classify
+    </button>
+    <button onclick="showTab('validate', this)">
+      <span class="icon">✅</span> Validate
+    </button>
+    <button onclick="showTab('compare', this)">
+      <span class="icon">📊</span> Compare
+    </button>
+    <button onclick="showTab('chat', this)">
+      <span class="icon">💬</span> Chat
+    </button>
+  </nav>
+
+  <main>
+
+    <!-- ══════════════ BUILD ══════════════ -->
+    <div id="tab-build" class="tab-panel active">
+      <h2>Build ICS Prompt</h2>
+      <p class="subtitle">Select a scenario to see its structured ICS blocks and compiled prompt.</p>
+
+      <div class="scenario-grid" id="scenario-grid">
+        <div class="empty">Loading scenarios…</div>
+      </div>
+
+      <button class="btn" id="build-btn" onclick="runBuild()" disabled>
+        Build Prompt
+      </button>
+
+      <div id="build-result" style="margin-top:20px;"></div>
+    </div>
+
+    <!-- ══════════════ CLASSIFY ══════════════ -->
+    <div id="tab-classify" class="tab-panel">
+      <h2>Auto-Classify Prompt</h2>
+      <p class="subtitle">Paste any unstructured system prompt — ICSAutoClassifier will detect its layers.</p>
+
+      <div style="margin-bottom:10px;">
+        <label>Sample prompts</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;" id="classify-samples">
+          <div class="empty">Loading…</div>
+        </div>
+      </div>
+
+      <div style="margin-bottom:12px;">
+        <label>Prompt text</label>
+        <textarea id="classify-input" rows="10" placeholder="Paste a system prompt here…"></textarea>
+      </div>
+
+      <button class="btn" onclick="runClassify()">Classify</button>
+
+      <div id="classify-result" style="margin-top:20px;"></div>
+    </div>
+
+    <!-- ══════════════ VALIDATE ══════════════ -->
+    <div id="tab-validate" class="tab-panel">
+      <h2>Validate ICS Prompt</h2>
+      <p class="subtitle">Check a structured ICS prompt against spec rules.</p>
+
+      <div style="margin-bottom:10px;">
+        <label>Example files</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;" id="validate-samples">
+          <div class="empty">Loading…</div>
+        </div>
+      </div>
+
+      <div style="margin-bottom:12px;">
+        <label>ICS prompt text</label>
+        <textarea id="validate-input" rows="10" placeholder="Paste a structured ICS prompt here…"></textarea>
+      </div>
+
+      <button class="btn" onclick="runValidate()">Validate</button>
+
+      <div id="validate-result" style="margin-top:20px;"></div>
+    </div>
+
+    <!-- ══════════════ COMPARE ══════════════ -->
+    <div id="tab-compare" class="tab-panel">
+      <h2>Token Savings Comparison</h2>
+      <p class="subtitle">See how ICS prompt caching reduces token usage over multiple API calls.</p>
+
+      <div class="row" style="margin-bottom:20px;">
+        <div>
+          <label>Scenario</label>
+          <select id="compare-scenario"></select>
+        </div>
+        <button class="btn" onclick="runCompare()" style="flex:0;">Compare</button>
+      </div>
+
+      <div id="compare-result"></div>
+    </div>
+
+    <!-- ══════════════ CHAT ══════════════ -->
+    <div id="tab-chat" class="tab-panel">
+      <h2>Live Chat</h2>
+      <p class="subtitle">Chat with the Orion DevAssist using ICS-structured prompts and prompt caching.</p>
+
+      <div id="chat-no-key" class="card" style="display:none;border-color:var(--warn);">
+        <strong>⚠️ ANTHROPIC_API_KEY not set</strong>
+        <p style="color:var(--muted);margin-top:6px;font-size:12px;">
+          Restart the server with <code>ANTHROPIC_API_KEY=sk-ant-… python web_app/app.py</code>
+        </p>
+      </div>
+
+      <div class="chat-container">
+        <div id="chat-messages">
+          <div class="empty">Send a message to start the conversation.</div>
+        </div>
+
+        <div class="chat-input-row">
+          <textarea id="chat-input" placeholder="Ask a question about the Orion B2B Payments Platform…"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
+          <button class="btn" id="chat-send" onclick="sendChat()">Send</button>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:6px;">
+          Shift+Enter for newline · Enter to send
+        </div>
+      </div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let samples = null;
+let selectedScenario = null;
+let chatHistory = [];  // {role, content}
+let chatTopics    = ['ACH rail implementation'];
+let chatDecisions = ['add retry logic to NACHA file generator'];
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+(async () => {
+  await Promise.all([checkStatus(), loadSamples()]);
+})();
+
+async function checkStatus() {
+  try {
+    const r = await fetch('/api/status');
+    const d = await r.json();
+    const dot  = document.getElementById('api-dot');
+    const text = document.getElementById('api-text');
+    if (d.api_key_set) {
+      dot.className  = 'dot ok';
+      text.textContent = 'API key set';
+    } else {
+      dot.className  = 'dot bad';
+      text.textContent = 'No API key';
+      document.getElementById('chat-no-key').style.display = 'block';
+    }
+  } catch { /* ignore */ }
+}
+
+async function loadSamples() {
+  const r = await fetch('/api/samples');
+  samples  = await r.json();
+
+  // Build tab — scenario cards
+  const grid = document.getElementById('scenario-grid');
+  grid.innerHTML = '';
+  for (const s of samples.build_scenarios) {
+    const card = document.createElement('div');
+    card.className = 'scenario-card';
+    card.dataset.id = s.id;
+    card.innerHTML = `<div class="s-icon">${s.icon}</div>
+      <div class="s-name">${s.name}</div>
+      <div class="s-desc">${s.description}</div>`;
+    card.addEventListener('click', () => selectScenario(s.id));
+    grid.appendChild(card);
+  }
+
+  // Classify tab — sample buttons
+  const cSamples = document.getElementById('classify-samples');
+  cSamples.innerHTML = '';
+  for (const s of samples.classify_samples) {
+    const btn = document.createElement('button');
+    btn.className = 'btn secondary';
+    btn.style.fontSize = '12px';
+    btn.textContent = s.name;
+    btn.onclick = () => { document.getElementById('classify-input').value = s.text; };
+    cSamples.appendChild(btn);
+  }
+
+  // Validate tab — sample buttons
+  const vSamples = document.getElementById('validate-samples');
+  vSamples.innerHTML = '';
+  for (const s of samples.validate_samples) {
+    const btn = document.createElement('button');
+    btn.className = 'btn secondary';
+    btn.style.fontSize = '12px';
+    btn.textContent = s.name;
+    btn.onclick = () => { document.getElementById('validate-input').value = s.text; };
+    vSamples.appendChild(btn);
+  }
+
+  // Compare tab — scenario select
+  const sel = document.getElementById('compare-scenario');
+  sel.innerHTML = samples.build_scenarios
+    .map(s => `<option value="${s.id}">${s.icon} ${s.name}</option>`)
+    .join('');
+}
+
+// ── Tab navigation ─────────────────────────────────────────────────────────
+function showTab(name, btn) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  btn.classList.add('active');
+}
+
+// ── BUILD ───────────────────────────────────────────────────────────────────
+function selectScenario(id) {
+  selectedScenario = id;
+  document.querySelectorAll('.scenario-card').forEach(c => {
+    c.classList.toggle('selected', c.dataset.id === id);
+  });
+  document.getElementById('build-btn').disabled = false;
+}
+
+async function runBuild() {
+  if (!selectedScenario) return;
+  const btn = document.getElementById('build-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Building…';
+  const el = document.getElementById('build-result');
+  el.innerHTML = '';
+  try {
+    const r = await fetch('/api/build', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({scenario_id: selectedScenario}),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Build failed');
+    el.innerHTML = renderBuildResult(d);
+  } catch (e) {
+    el.innerHTML = `<div class="finding critical"><div class="rule">Error</div><div>${e.message}</div></div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Build Prompt';
+  }
+}
+
+function renderBuildResult(d) {
+  const stats = `
+    <div class="stats">
+      <div class="stat"><div class="stat-value">${d.blocks.length}</div><div class="stat-label">Blocks</div></div>
+      <div class="stat"><div class="stat-value">${d.total_tokens.toLocaleString()}</div><div class="stat-label">Total tokens</div></div>
+      <div class="stat"><div class="stat-value">${d.cached_tokens.toLocaleString()}</div><div class="stat-label">Cache-eligible</div></div>
+      <div class="stat"><div class="stat-value">${d.cache_pct}%</div><div class="stat-label">Cache ratio</div></div>
+    </div>`;
+
+  const blocks = d.blocks.map(b => `
+    <div class="card">
+      <div class="card-header">
+        <span class="chip ${b.layer}">${b.layer}</span>
+        <span style="font-size:11px;color:var(--muted);">
+          ${b.tokens} tokens
+          ${b.cache_eligible ? '· <span style="color:var(--accent2);">⚡ cache</span>' : ''}
+        </span>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill ${b.cache_eligible ? 'cached' : ''}"
+             style="width:${Math.min(100, b.tokens/2)}%"></div>
+      </div>
+      <pre style="margin-top:10px;">${escHtml(b.content)}</pre>
+    </div>`).join('');
+
+  const compiled = `
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">Compiled prompt</span>
+        <button class="btn secondary" style="font-size:11px;padding:4px 10px;"
+          onclick="copyText(${JSON.stringify(d.compiled)})">Copy</button>
+      </div>
+      <pre>${escHtml(d.compiled)}</pre>
+    </div>`;
+
+  return stats + blocks + compiled;
+}
+
+// ── CLASSIFY ────────────────────────────────────────────────────────────────
+async function runClassify() {
+  const text = document.getElementById('classify-input').value.trim();
+  if (!text) return;
+  const el = document.getElementById('classify-result');
+  el.innerHTML = '<span class="spinner"></span> Classifying…';
+  try {
+    const r = await fetch('/api/classify', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({text}),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Classify failed');
+    el.innerHTML = renderClassifyResult(d);
+  } catch (e) {
+    el.innerHTML = `<div class="finding critical"><div class="rule">Error</div><div>${e.message}</div></div>`;
+  }
+}
+
+function renderClassifyResult(d) {
+  const layerChips = d.blocks.map(b =>
+    `<span class="chip ${b.layer}">${b.layer}</span>`).join(' ');
+
+  const warns = d.warnings.length
+    ? d.warnings.map(w => `<div class="finding warn"><div class="rule">${escHtml(w)}</div></div>`).join('')
+    : '<div class="finding ok"><div class="rule">No warnings</div></div>';
+
+  const blocks = d.blocks.map(b => `
+    <div class="card">
+      <div class="card-header">
+        <span class="chip ${b.layer}">${b.layer}</span>
+        <span style="font-size:11px;color:var(--muted);">
+          confidence: ${Math.round((b.confidence||0)*100)}%
+        </span>
+      </div>
+      <pre>${escHtml(b.content)}</pre>
+    </div>`).join('');
+
+  const icsOut = `
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">ICS Output</span>
+        <button class="btn secondary" style="font-size:11px;padding:4px 10px;"
+          onclick="copyText(${JSON.stringify(d.ics_output)})">Copy</button>
+      </div>
+      <pre>${escHtml(d.ics_output)}</pre>
+    </div>`;
+
+  return `
+    <div class="stats">
+      <div class="stat"><div class="stat-value">${d.blocks.length}</div><div class="stat-label">Detected blocks</div></div>
+      <div class="stat"><div class="stat-value">${d.warnings.length}</div><div class="stat-label">Warnings</div></div>
+    </div>
+    <div class="card" style="margin-bottom:12px;">
+      <div class="card-title" style="margin-bottom:8px;">Detected layers</div>
+      ${layerChips || '<span style="color:var(--muted)">None</span>'}
+    </div>
+    <div class="card" style="margin-bottom:12px;">
+      <div class="card-title" style="margin-bottom:8px;">Warnings</div>
+      ${warns}
+    </div>
+    ${blocks}
+    ${icsOut}`;
+}
+
+// ── VALIDATE ────────────────────────────────────────────────────────────────
+async function runValidate() {
+  const text = document.getElementById('validate-input').value.trim();
+  if (!text) return;
+  const el = document.getElementById('validate-result');
+  el.innerHTML = '<span class="spinner"></span> Validating…';
+  try {
+    const r = await fetch('/api/validate', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({text}),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Validate failed');
+    el.innerHTML = renderValidateResult(d);
+  } catch (e) {
+    el.innerHTML = `<div class="finding critical"><div class="rule">Error</div><div>${e.message}</div></div>`;
+  }
+}
+
+function renderValidateResult(d) {
+  const badge = d.compliant
+    ? '<span style="color:var(--accent2);font-size:18px;">✓ Compliant</span>'
+    : '<span style="color:var(--danger);font-size:18px;">✗ Non-compliant</span>';
+
+  const violations = d.violations.length
+    ? d.violations.map(v => `
+        <div class="finding critical">
+          <div class="rule">${escHtml(v.rule)}</div>
+          <div class="step">${escHtml(v.step)}</div>
+          <div style="margin-top:4px;">${escHtml(v.message)}</div>
+        </div>`).join('')
+    : '<div class="finding ok"><div class="rule">No violations</div></div>';
+
+  const warnings = d.warnings && d.warnings.length
+    ? d.warnings.map(w => `<div class="finding warn"><div class="rule">${escHtml(w)}</div></div>`).join('')
+    : '';
+
+  return `
+    <div class="card" style="margin-bottom:16px;">
+      <div class="card-header">
+        <div class="card-title">Result</div>
+        ${badge}
+      </div>
+      <div style="display:flex;gap:16px;margin-top:10px;">
+        <span style="color:var(--muted);font-size:12px;">${d.violations.length} violation(s)</span>
+        ${d.warnings ? `<span style="color:var(--muted);font-size:12px;">${d.warnings.length} warning(s)</span>` : ''}
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title" style="margin-bottom:10px;">Violations</div>
+      ${violations}
+    </div>
+    ${warnings ? `<div class="card" style="margin-top:12px;"><div class="card-title" style="margin-bottom:10px;">Warnings</div>${warnings}</div>` : ''}`;
+}
+
+// ── COMPARE ─────────────────────────────────────────────────────────────────
+async function runCompare() {
+  const scenario_id = document.getElementById('compare-scenario').value;
+  const el = document.getElementById('compare-result');
+  el.innerHTML = '<span class="spinner"></span> Calculating…';
+  try {
+    const r = await fetch('/api/compare', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({scenario_id}),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Compare failed');
+    el.innerHTML = renderCompareResult(d);
+  } catch (e) {
+    el.innerHTML = `<div class="finding critical"><div class="rule">Error</div><div>${e.message}</div></div>`;
+  }
+}
+
+function renderCompareResult(d) {
+  const layers = d.layers.map(l => `
+    <div class="card" style="padding:10px 14px;">
+      <div style="display:flex;justify-content:space-between;align-items:center;">
+        <span class="chip ${l.name}">${l.name}</span>
+        <span style="font-size:12px;">
+          ${l.tokens} tokens
+          ${l.cache_eligible ? '· <span style="color:var(--accent2);">⚡ cache</span>' : ''}
+        </span>
+      </div>
+    </div>`).join('');
+
+  const rows = d.savings.map(s => `
+    <tr>
+      <td>${s.calls} calls</td>
+      <td>${s.naive.toLocaleString()}</td>
+      <td>${s.ics.toLocaleString()}</td>
+      <td class="saved">-${s.saved.toLocaleString()} (${s.pct}%)</td>
+    </tr>`).join('');
+
+  return `
+    <div class="stats">
+      <div class="stat"><div class="stat-value">${d.naive_tokens.toLocaleString()}</div><div class="stat-label">Naive tokens/call</div></div>
+      <div class="stat"><div class="stat-value">${d.ics_total.toLocaleString()}</div><div class="stat-label">ICS total/call</div></div>
+      <div class="stat"><div class="stat-value">${d.dynamic_tokens.toLocaleString()}</div><div class="stat-label">Dynamic only</div></div>
+    </div>
+    <h3 style="font-size:13px;margin-bottom:10px;">Layer breakdown</h3>
+    <div style="margin-bottom:20px;">${layers}</div>
+    <h3 style="font-size:13px;margin-bottom:10px;">Cumulative savings</h3>
+    <div class="card">
+      <table>
+        <thead><tr><th>Scale</th><th>Naive</th><th>ICS</th><th>Saved</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+}
+
+// ── CHAT ────────────────────────────────────────────────────────────────────
+async function sendChat() {
+  const input = document.getElementById('chat-input');
+  const msg   = input.value.trim();
+  if (!msg) return;
+
+  input.value = '';
+  appendMsg('user', msg);
+
+  const sendBtn = document.getElementById('chat-send');
+  sendBtn.disabled = true;
+
+  const assistantEl = appendMsg('assistant', '');
+  const body = assistantEl.querySelector('.body');
+  body.innerHTML = '<span class="spinner"></span>';
+
+  let buffer = '';
+
+  try {
+    const params = new URLSearchParams({
+      message:   msg,
+      topics:    chatTopics.join(','),
+      decisions: chatDecisions.join(','),
+    });
+
+    const es = new EventSource(`/api/chat/stream?${params}`);
+
+    es.onmessage = (e) => {
+      const data = JSON.parse(e.data);
+      if (data.type === 'text') {
+        buffer += data.text;
+        body.textContent = buffer;
+        document.getElementById('chat-messages').scrollTop = 9999;
+      } else if (data.type === 'done') {
+        es.close();
+        sendBtn.disabled = false;
+        const u = data.usage;
+        const usage = document.createElement('div');
+        usage.className = 'usage-row';
+        usage.textContent =
+          `↑ ${u.input} in · ↓ ${u.output} out · 💾 ${u.cache_read} cache_read · ✏️ ${u.cache_write} cache_write`;
+        assistantEl.appendChild(usage);
+        // update session context
+        chatTopics.push(msg.substring(0, 60));
+      } else if (data.type === 'error') {
+        es.close();
+        body.textContent = '⚠️ ' + data.message;
+        sendBtn.disabled = false;
+      }
+    };
+    es.onerror = () => {
+      es.close();
+      if (!buffer) body.textContent = '⚠️ Connection error';
+      sendBtn.disabled = false;
+    };
+  } catch (e) {
+    body.textContent = '⚠️ ' + e.message;
+    sendBtn.disabled = false;
+  }
+}
+
+function appendMsg(role, content) {
+  const msgs = document.getElementById('chat-messages');
+  // clear empty state
+  const empty = msgs.querySelector('.empty');
+  if (empty) empty.remove();
+
+  const el = document.createElement('div');
+  el.className = `msg ${role}`;
+  el.innerHTML = `<div class="role">${role}</div><div class="body">${escHtml(content)}</div>`;
+  msgs.appendChild(el);
+  msgs.scrollTop = 9999;
+  return el;
+}
+
+// ── Utilities ───────────────────────────────────────────────────────────────
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function copyText(text) {
+  navigator.clipboard.writeText(text).catch(() => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+  });
+}
+</script>
+</body>
+</html>
