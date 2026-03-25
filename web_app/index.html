@@ -691,6 +691,9 @@ function showTab(name, btn) {
   document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
   document.getElementById('tab-' + name).classList.add('active');
   btn.classList.add('active');
+  if (name === 'console') {
+    document.getElementById('console-badge').style.display = 'none';
+  }
 }
 
 // ── BUILD ───────────────────────────────────────────────────────────────────
@@ -1467,15 +1470,6 @@ function copyConsole() {
   copyText(text);
 }
 
-// Clear badge when user opens console tab
-const _origShowTab = showTab;
-// patch showTab to clear badge
-function showTab(name, btn) {
-  _origShowTab(name, btn);
-  if (name === 'console') {
-    document.getElementById('console-badge').style.display = 'none';
-  }
-}
 
 // Start SSE log stream immediately
 startConsole();
