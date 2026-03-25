@@ -8,11 +8,13 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from ics_runtime.core.result import RunResult, ToolCallRecord
+from ics_runtime.observability.recorder import MetricsRecorder
 from ics_runtime.providers.base import ProviderMessage
 from ics_runtime.session_backends.base import SessionData
 
 if TYPE_CHECKING:
     from ics_runtime.core.agent import Agent
+    from ics_runtime.observability.metrics import SessionMetrics
 
 # Pricing per 1M tokens (USD) — input / output / cache_write / cache_read
 _PRICING: dict[str, dict[str, float]] = {
@@ -61,6 +63,7 @@ class Session:
         self.session_id = session_id
         self._session_vars = session_vars
         self._pending_clear = False
+        self._recorder = MetricsRecorder(session_id, agent._model, agent._provider_name)
 
         backend = agent._backend
         if not backend.exists(session_id):
@@ -199,7 +202,7 @@ class Session:
         data.cleared = False
         agent._backend.save(self.session_id, data)
 
-        return RunResult(
+        result = RunResult(
             text=response_text,
             validated=validated,
             violations=violations,
@@ -218,6 +221,8 @@ class Session:
             provider=agent._provider_name,
             cost_usd=cost,
         )
+        self._recorder.record(result)
+        return result
 
     def clear(self) -> None:
         """Mark session state for CLEAR on the next run (ICS §3.3 semantics)."""
@@ -227,6 +232,11 @@ class Session:
     def turn_count(self) -> int:
         data = self._agent._backend.load(self.session_id)
         return data.turn_count if data else 0
+
+    @property
+    def metrics(self) -> "SessionMetrics":
+        """Accumulated observability metrics for this session."""
+        return self._recorder.metrics
 
     # ------------------------------------------------------------------
     # Internal helpers
