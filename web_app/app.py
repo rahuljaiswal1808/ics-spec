@@ -929,6 +929,7 @@ async def api_benchmark(req: BenchmarkRequest):
                 if "401" in str(exc) or "authentication" in str(exc).lower() or "api_key" in str(exc).lower():
                     log_error("[benchmark/anthropic] Auth error — stopping early")
                     break
+        any_cache_write = any(c.get("cache_creation", 0) > 0 for c in per_call if "error" not in c)
         any_cache_read  = any(c.get("cache_read",     0) > 0 for c in per_call if "error" not in c)
         cacheable_est   = sum(est_tokens(str(b)) for b in blocks if b.cache_eligible)
 
