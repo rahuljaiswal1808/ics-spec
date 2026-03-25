@@ -101,9 +101,17 @@ class CapabilityEnforcer:
                         evidence=response_text[:120],
                     ))
 
-            # Float arithmetic on monetary values heuristic
+            # Float arithmetic on monetary values heuristic — only trigger on
+            # explicit code-like float operations, NOT on plain decimal numbers
+            # in prose (e.g. "DSCR is 1.18" is fine).
             if "float" in rule_lower and "monetar" in rule_lower:
-                if re.search(r"\bfloat\(|\.0\b.*\$|\$.*\.0\b", response_text, re.I):
+                if re.search(
+                    r"\bfloat\s*\(|\bDecimal\s*\(\s*str\s*\(|"
+                    r"[*/]\s*0\.0[0-9]+\b.*\$|\$.*[*/]\s*0\.0[0-9]+\b|"
+                    r"\b100\.0\b|\bdivide\b.{0,30}\$",
+                    response_text,
+                    re.I,
+                ):
                     violations.append(ContractViolation(
                         rule=f"DENY {rule}",
                         kind="capability",
