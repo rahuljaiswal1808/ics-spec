@@ -737,8 +737,16 @@ function onChatProviderChange() {
 }
 
 async function loadSamples() {
-  const r = await fetch('/api/samples');
-  samples  = await r.json();
+  let r;
+  try {
+    r = await fetch('/api/samples');
+    if (!r.ok) throw new Error(`Server returned ${r.status}`);
+    samples = await r.json();
+  } catch (e) {
+    document.getElementById('scenario-grid').innerHTML =
+      `<div class="finding critical"><div class="rule">Failed to load scenarios</div><div>${e.message}</div></div>`;
+    return;
+  }
 
   // Build tab — scenario cards
   const grid = document.getElementById('scenario-grid');
