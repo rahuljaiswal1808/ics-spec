@@ -304,6 +304,11 @@ class CompareRequest(BaseModel):
     naive_text: Optional[str] = None
 
 
+class BenchmarkRequest(BaseModel):
+    scenario_id: str
+    n_calls: int = 3  # how many ICS calls to make (max 5)
+
+
 # ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
@@ -448,6 +453,131 @@ async def api_compare(req: CompareRequest):
         "dynamic_tokens": dynamic_tok,
         "savings":        savings,
     }
+
+
+@app.post("/api/benchmark")
+async def api_benchmark(req: BenchmarkRequest):
+    """
+    Make real Anthropic API calls and return actual token usage per call.
+    Uses max_tokens=1 to keep output cost negligible — we only care about input usage.
+    Requires ANTHROPIC_API_KEY to be set.
+    """
+    try:
+        import anthropic
+    except ImportError:
+        raise HTTPException(400, "anthropic package not installed. Run: pip install anthropic")
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(400, "ANTHROPIC_API_KEY is not set")
+
+    scenario = SCENARIOS.get(req.scenario_id)
+    if not scenario:
+        raise HTTPException(404, f"Unknown scenario '{req.scenario_id}'")
+
+    n_calls = max(1, min(req.n_calls, 5))  # clamp 1–5
+
+    blocks = [
+        ics.immutable(scenario["immutable"]),
+        ics.capability(scenario["capability"]),
+        build_session(scenario["session"]["topics"], scenario["session"]["decisions"]),
+        build_task(scenario["task"]),
+        ics.output_contract(scenario["output"]),
+    ]
+
+    # Build system parts with cache_control on eligible layers
+    system_parts = []
+    for block in blocks:
+        part: dict = {"type": "text", "text": str(block)}
+        if block.cache_eligible:
+            part["cache_control"] = {"type": "ephemeral"}
+        system_parts.append(part)
+
+    client = anthropic.Anthropic(api_key=api_key)
+    per_call = []
+
+    for i in range(n_calls):
+        try:
+            resp = client.messages.create(
+                model="claude-haiku-4-5-20251001",  # cheapest model — we only need usage data
+                max_tokens=1,
+                system=system_parts,
+                messages=[{"role": "user", "content": scenario["task"]}],
+                betas=["prompt-caching-2024-07-31"],
+            )
+            u = resp.usage
+            inp          = u.input_tokens
+            cache_create = getattr(u, "cache_creation_input_tokens", 0) or 0
+            cache_read   = getattr(u, "cache_read_input_tokens",    0) or 0
+            out          = u.output_tokens
+            per_call.append({
+                "call":          i + 1,
+                "input_tokens":        inp,
+                "cache_creation":      cache_create,
+                "cache_read":          cache_read,
+                "output_tokens":       out,
+                "total_billed":        inp + cache_create + cache_read,
+                "cache_hit":           cache_read > 0,
+            })
+        except Exception as exc:
+            per_call.append({
+                "call":    i + 1,
+                "error":   str(exc),
+            })
+
+    # Derive ground-truth summary from call 1
+    first = per_call[0] if per_call and "error" not in per_call[0] else None
+    summary = {}
+    if first:
+        real_total   = first["input_tokens"] + first["cache_creation"]
+        real_dynamic = first["input_tokens"]   # non-cached portion
+        real_cached  = first["cache_creation"]
+
+        est_total   = est_tokens("".join(str(b) for b in blocks))
+        est_dynamic = sum(est_tokens(str(b)) for b in blocks if not b.cache_eligible)
+
+        # cost model: input = $0.80/MTok, cache_write = $1.00/MTok, cache_read = $0.08/MTok (Haiku)
+        PRICE_INPUT        = 0.80  / 1_000_000
+        PRICE_CACHE_WRITE  = 1.00  / 1_000_000
+        PRICE_CACHE_READ   = 0.08  / 1_000_000
+        PRICE_OUTPUT       = 4.00  / 1_000_000
+
+        naive_cost_per_call = real_total * PRICE_INPUT
+        ics_call1_cost = (
+            real_dynamic * PRICE_INPUT +
+            real_cached  * PRICE_CACHE_WRITE
+        )
+        ics_repeat_cost = (
+            real_dynamic * PRICE_INPUT +
+            real_cached  * PRICE_CACHE_READ
+        )
+
+        calls_data = []
+        for n in [1, 2, 3, 5, 10, 25, 50, 100]:
+            naive_total_cost = naive_cost_per_call * n
+            ics_total_cost   = ics_call1_cost + ics_repeat_cost * max(0, n - 1)
+            saved_cost       = max(0.0, naive_total_cost - ics_total_cost)
+            pct              = round(saved_cost / naive_total_cost * 100) if naive_total_cost else 0
+            calls_data.append({
+                "calls":      n,
+                "naive_cost": round(naive_total_cost, 6),
+                "ics_cost":   round(ics_total_cost,   6),
+                "saved_cost": round(saved_cost,        6),
+                "pct":        pct,
+            })
+
+        summary = {
+            "real_total_tokens":   real_total,
+            "real_dynamic_tokens": real_dynamic,
+            "real_cached_tokens":  real_cached,
+            "est_total_tokens":    est_total,
+            "est_dynamic_tokens":  est_dynamic,
+            "estimate_error_pct":  round(abs(est_total - real_total) / real_total * 100, 1) if real_total else None,
+            "price_model":         "claude-haiku-4-5-20251001 — input $0.80/MTok, cache_write $1.00/MTok, cache_read $0.08/MTok",
+            "cost_savings":        calls_data,
+        }
+
+    return {"per_call": per_call, "summary": summary}
 
 
 @app.get("/api/chat/stream")

@@ -482,14 +482,48 @@
         </div>
       </div>
 
-      <div class="row" style="margin-bottom:20px;">
+      <div class="row" style="margin-bottom:8px;">
         <div>
           <label>Scenario</label>
           <select id="compare-scenario"></select>
         </div>
-        <button class="btn" onclick="runCompare()" style="flex:0;">Compare</button>
+        <button class="btn" onclick="runCompare()" style="flex:0;">Estimate</button>
       </div>
 
+      <!-- Real benchmark row -->
+      <div class="card" style="margin-bottom:20px;border-color:var(--accent2);background:rgba(0,212,170,.04);">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+          <div>
+            <div style="font-weight:700;font-size:13px;margin-bottom:3px;">
+              ⚡ Run Real Benchmark
+            </div>
+            <div style="font-size:12px;color:var(--muted);">
+              Makes actual Anthropic API calls and returns ground-truth token counts + real cost data.
+              Uses <code>claude-haiku-4-5-20251001</code> with <code>max_tokens=1</code> — cost is negligible (~$0.0001 per run).
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;">
+            <div>
+              <label style="margin-bottom:4px;">Calls to simulate</label>
+              <select id="bench-n-calls" style="width:80px;">
+                <option value="2">2</option>
+                <option value="3" selected>3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+              </select>
+            </div>
+            <button class="btn" id="bench-btn" onclick="runBenchmark()"
+              style="background:var(--accent2);color:#000;margin-top:18px;">
+              Run Test
+            </button>
+          </div>
+        </div>
+        <div id="bench-no-key" style="display:none;margin-top:10px;font-size:12px;color:var(--warn);">
+          ⚠️ Requires ANTHROPIC_API_KEY — restart server with the key set to enable this.
+        </div>
+      </div>
+
+      <div id="bench-result" style="margin-bottom:24px;"></div>
       <div id="compare-result"></div>
     </div>
 
@@ -550,6 +584,8 @@ async function checkStatus() {
       dot.className  = 'dot bad';
       text.textContent = 'No API key';
       document.getElementById('chat-no-key').style.display = 'block';
+      document.getElementById('bench-btn').disabled = true;
+      document.getElementById('bench-no-key').style.display = 'block';
     }
   } catch { /* ignore */ }
 }
@@ -1010,6 +1046,197 @@ function renderCompareResult(d) {
     </div>`;
 
   return stats + layers + simulation + cumulative;
+}
+
+// ── BENCHMARK ───────────────────────────────────────────────────────────────
+async function runBenchmark() {
+  const scenario_id = document.getElementById('compare-scenario').value;
+  const n_calls     = parseInt(document.getElementById('bench-n-calls').value);
+  const el          = document.getElementById('bench-result');
+  const btn         = document.getElementById('bench-btn');
+
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Running…';
+  el.innerHTML = `
+    <div class="card" style="color:var(--muted);font-size:13px;">
+      <span class="spinner"></span>
+      Making ${n_calls} real API calls to Anthropic… this takes ~${n_calls * 3}–${n_calls * 6}s
+    </div>`;
+
+  try {
+    const r = await fetch('/api/benchmark', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({scenario_id, n_calls}),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Benchmark failed');
+    el.innerHTML = renderBenchmarkResult(d);
+  } catch (e) {
+    el.innerHTML = `<div class="finding critical"><div class="rule">Error</div><div>${e.message}</div></div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Run Test';
+  }
+}
+
+function renderBenchmarkResult(d) {
+  const s = d.summary;
+
+  // ── Per-call table ────────────────────────────────────────────────────────
+  const callRows = d.per_call.map(c => {
+    if (c.error) return `
+      <tr>
+        <td>Call ${c.call}</td>
+        <td colspan="5" style="color:var(--danger);">${escHtml(c.error)}</td>
+      </tr>`;
+    return `
+      <tr>
+        <td>Call ${c.call}</td>
+        <td>${c.input_tokens.toLocaleString()}</td>
+        <td style="color:var(--accent2);">
+          ${c.cache_creation > 0
+            ? `+${c.cache_creation.toLocaleString()} <span style="font-size:10px;">(written)</span>`
+            : '—'}
+        </td>
+        <td style="color:var(--accent2);">
+          ${c.cache_read > 0
+            ? `${c.cache_read.toLocaleString()} <span style="font-size:10px;">(hit ✓)</span>`
+            : '—'}
+        </td>
+        <td>${c.total_billed.toLocaleString()}</td>
+        <td>
+          ${c.cache_hit
+            ? '<span style="color:var(--accent2);">⚡ Cache hit</span>'
+            : c.cache_creation > 0
+              ? '<span style="color:var(--warn);">🌱 Cache seeded</span>'
+              : '<span style="color:var(--muted);">—</span>'}
+        </td>
+      </tr>`;
+  }).join('');
+
+  const perCallSection = `
+    <h3 style="font-size:13px;margin-bottom:8px;">Real API calls — per-call usage</h3>
+    <div class="card" style="margin-bottom:16px;overflow-x:auto;">
+      <table>
+        <thead>
+          <tr>
+            <th style="text-align:left;">Call</th>
+            <th>Input tokens</th>
+            <th style="color:var(--accent2);">Cache write</th>
+            <th style="color:var(--accent2);">Cache read</th>
+            <th>Total billed</th>
+            <th style="text-align:left;">Status</th>
+          </tr>
+        </thead>
+        <tbody>${callRows}</tbody>
+      </table>
+    </div>`;
+
+  if (!s || !s.real_total_tokens) return `
+    <div class="card" style="border-color:var(--accent2);">
+      <div class="card-title" style="margin-bottom:8px;">Real Benchmark Results</div>
+      ${perCallSection}
+    </div>`;
+
+  // ── Estimate accuracy ────────────────────────────────────────────────────
+  const errPct = s.estimate_error_pct;
+  const errColor = errPct < 10 ? 'var(--accent2)' : errPct < 25 ? 'var(--warn)' : 'var(--danger)';
+  const accuracySection = `
+    <h3 style="font-size:13px;margin-bottom:8px;">Estimate vs reality</h3>
+    <div class="card" style="margin-bottom:16px;">
+      <table>
+        <thead>
+          <tr>
+            <th style="text-align:left;">Metric</th>
+            <th>Estimated (len/4)</th>
+            <th>Real (API)</th>
+            <th>Error</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Total tokens / call</td>
+            <td style="color:var(--muted);">${s.est_total_tokens.toLocaleString()}</td>
+            <td style="font-weight:700;">${s.real_total_tokens.toLocaleString()}</td>
+            <td style="color:${errColor};">${errPct}%</td>
+          </tr>
+          <tr>
+            <td>Dynamic (resent each call)</td>
+            <td style="color:var(--muted);">${s.est_dynamic_tokens.toLocaleString()}</td>
+            <td style="font-weight:700;">${s.real_dynamic_tokens.toLocaleString()}</td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <td>Cached (stable layers)</td>
+            <td style="color:var(--muted);">—</td>
+            <td style="font-weight:700;color:var(--accent2);">${s.real_cached_tokens.toLocaleString()}</td>
+            <td>—</td>
+          </tr>
+        </tbody>
+      </table>
+      <div style="margin-top:10px;font-size:11px;color:var(--muted);">
+        ${errPct < 10
+          ? '✓ Estimate is accurate (within 10%)'
+          : errPct < 25
+            ? '⚠️ Estimate is off — content has unusual tokenisation density'
+            : '✗ Estimate is significantly off — use real benchmark counts for precise projections'}
+      </div>
+    </div>`;
+
+  // ── Real cost projections ────────────────────────────────────────────────
+  const maxCost = Math.max(...s.cost_savings.map(c => c.naive_cost));
+  const costRows = s.cost_savings.map(c => {
+    const barNaive = 100;
+    const barIcs   = maxCost ? Math.round(c.ics_cost / c.naive_cost * 100) : 0;
+    return `
+      <tr>
+        <td>${c.calls} calls</td>
+        <td style="color:var(--danger);">$${c.naive_cost < 0.001 ? c.naive_cost.toFixed(6) : c.naive_cost.toFixed(4)}</td>
+        <td style="color:var(--accent2);">$${c.ics_cost < 0.001   ? c.ics_cost.toFixed(6)   : c.ics_cost.toFixed(4)}</td>
+        <td>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div style="flex:1;min-width:80px;background:var(--border);border-radius:3px;height:8px;overflow:hidden;">
+              <div style="width:${100 - barIcs}%;height:100%;background:var(--accent);border-radius:3px;"></div>
+            </div>
+            <span class="saved" style="white-space:nowrap;">
+              $${c.saved_cost.toFixed(6)} (${c.pct}%)
+            </span>
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+
+  const costSection = `
+    <h3 style="font-size:13px;margin-bottom:6px;">Real cost projections</h3>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+      Based on actual token counts from the benchmark.
+      Price model: <code style="font-size:11px;">${escHtml(s.price_model)}</code>
+    </p>
+    <div class="card">
+      <table>
+        <thead>
+          <tr>
+            <th style="text-align:left;">Scale</th>
+            <th style="color:var(--danger);">Naive cost</th>
+            <th style="color:var(--accent2);">ICS cost</th>
+            <th style="text-align:left;">$ saved</th>
+          </tr>
+        </thead>
+        <tbody>${costRows}</tbody>
+      </table>
+    </div>`;
+
+  return `
+    <div style="border:1px solid var(--accent2);border-radius:var(--radius);padding:16px;margin-bottom:4px;
+                background:rgba(0,212,170,.04);">
+      <div style="font-size:13px;font-weight:700;color:var(--accent2);margin-bottom:16px;">
+        ⚡ Real benchmark results — ground truth from Anthropic API
+      </div>
+      ${perCallSection}
+      ${accuracySection}
+      ${costSection}
+    </div>`;
 }
 
 // ── CHAT ────────────────────────────────────────────────────────────────────
