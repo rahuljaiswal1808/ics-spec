@@ -1038,12 +1038,17 @@ async def api_benchmark(req: BenchmarkRequest):
                 break
 
     any_cache_read = any(c.get("cache_read", 0) > 0 for c in per_call if "error" not in c)
-    first = per_call[0] if per_call and "error" not in per_call[0] else None
+    first  = per_call[0] if per_call and "error" not in per_call[0] else None
+    # For OpenAI, cache reads only appear from call 2 onwards — use the first repeat
+    # call to get the actual cached/dynamic split for the cost projection.
+    second = next((c for c in per_call[1:] if "error" not in c), None)
     summary = {}
     if first:
         real_total   = first["total_billed"]
-        real_cached  = first["cache_read"]
-        real_dynamic = first["input_tokens"]
+        # Repeat-call split: prefer call-2 data (has cache reads); fall back to call-1
+        repeat       = second or first
+        real_cached  = repeat["cache_read"]
+        real_dynamic = repeat["input_tokens"]   # non-cached tokens on every repeat call
         est_total    = total_est
         est_dynamic  = sum(est_tokens(str(b)) for b in blocks if not b.cache_eligible)
 
@@ -1052,9 +1057,8 @@ async def api_benchmark(req: BenchmarkRequest):
         PRICE_CACHED_INPUT = 0.075 / 1_000_000
 
         naive_cost_per_call = real_total * PRICE_INPUT
-        # On OpenAI, cached tokens are charged at half price automatically
-        ics_call1_cost  = real_total * PRICE_INPUT           # first call — no cache yet
-        ics_repeat_cost = real_dynamic * PRICE_INPUT + real_cached * PRICE_CACHED_INPUT
+        ics_call1_cost  = real_total * PRICE_INPUT                                   # seeds cache, full price
+        ics_repeat_cost = real_dynamic * PRICE_INPUT + real_cached * PRICE_CACHED_INPUT  # cache hits half price
 
         calls_data = []
         for n in [1, 2, 3, 5, 10, 25, 50, 100]:
@@ -1079,8 +1083,8 @@ async def api_benchmark(req: BenchmarkRequest):
 
         summary = {
             "real_total_tokens":    real_total,
-            "real_dynamic_tokens":  real_dynamic,
-            "real_cached_tokens":   real_cached,
+            "real_dynamic_tokens":  real_dynamic,   # tokens resent on every call (from call 2)
+            "real_cached_tokens":   real_cached,    # tokens served from cache on repeat calls
             "est_total_tokens":     est_total,
             "est_dynamic_tokens":   est_dynamic,
             "estimate_error_pct":   round(abs(est_total - real_total) / real_total * 100, 1) if real_total else None,
