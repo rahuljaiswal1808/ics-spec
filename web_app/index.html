@@ -439,6 +439,49 @@
       <h2>Token Savings Comparison</h2>
       <p class="subtitle">See how ICS prompt caching reduces token usage over multiple API calls.</p>
 
+      <!-- Static explainer — always visible -->
+      <div class="card" style="margin-bottom:20px;border-color:var(--accent);background:rgba(108,99,255,.06);">
+        <div class="card-title" style="margin-bottom:12px;">How ICS prompt caching works</div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
+          <!-- Naive side -->
+          <div>
+            <div style="font-size:11px;font-weight:700;color:var(--danger);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">
+              Without ICS — Naive
+            </div>
+            <div style="display:flex;flex-direction:column;gap:4px;" id="explainer-naive">
+              <!-- filled by JS after scenario loads -->
+              <div style="font-size:11px;color:var(--muted);">Select a scenario and click Compare</div>
+            </div>
+            <div style="margin-top:8px;font-size:11px;color:var(--muted);">
+              Every call sends <strong style="color:var(--text);">all</strong> tokens again.
+            </div>
+          </div>
+          <!-- ICS side -->
+          <div>
+            <div style="font-size:11px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">
+              With ICS — Cached
+            </div>
+            <div style="display:flex;flex-direction:column;gap:4px;" id="explainer-ics">
+              <div style="font-size:11px;color:var(--muted);">Select a scenario and click Compare</div>
+            </div>
+            <div style="margin-top:8px;font-size:11px;color:var(--muted);">
+              Stable layers are <strong style="color:var(--accent2);">cached once</strong>. Only dynamic layers are resent.
+            </div>
+          </div>
+        </div>
+
+        <div style="background:var(--code-bg);border-radius:var(--radius);padding:12px;font-size:12px;line-height:1.8;border:1px solid var(--border);">
+          <strong>Formula:</strong><br>
+          Naive cost (N calls) &nbsp;=&nbsp; <span style="color:var(--danger);">N × total_tokens</span><br>
+          ICS cost &nbsp;&nbsp; (N calls) &nbsp;=&nbsp; <span style="color:var(--accent2);">total_tokens</span> + <span style="color:var(--warn);">(N − 1) × dynamic_tokens</span><br>
+          <span style="color:var(--muted);">
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+            ↑ full first call &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ↑ only dynamic on repeat calls
+          </span>
+        </div>
+      </div>
+
       <div class="row" style="margin-bottom:20px;">
         <div>
           <label>Scenario</label>
@@ -781,40 +824,192 @@ async function runCompare() {
 }
 
 function renderCompareResult(d) {
-  const layers = d.layers.map(l => `
-    <div class="card" style="padding:10px 14px;">
-      <div style="display:flex;justify-content:space-between;align-items:center;">
-        <span class="chip ${l.name}">${l.name}</span>
-        <span style="font-size:12px;">
-          ${l.tokens} tokens
-          ${l.cache_eligible ? '· <span style="color:var(--accent2);">⚡ cache</span>' : ''}
-        </span>
-      </div>
+  // ── Update explainer side-by-side blocks ──────────────────────────────────
+  const naiveEl = document.getElementById('explainer-naive');
+  const icsEl   = document.getElementById('explainer-ics');
+  naiveEl.innerHTML = d.layers.map(l => `
+    <div style="display:flex;align-items:center;justify-content:space-between;
+                background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.25);
+                border-radius:5px;padding:5px 10px;">
+      <span class="chip ${l.name}" style="font-size:10px;">${l.name}</span>
+      <span style="font-size:11px;color:var(--danger);">${l.tokens} tok ↑ sent</span>
+    </div>`).join('');
+  icsEl.innerHTML = d.layers.map(l => `
+    <div style="display:flex;align-items:center;justify-content:space-between;
+                background:${l.cache_eligible ? 'rgba(0,212,170,.08)' : 'rgba(245,158,11,.08)'};
+                border:1px solid ${l.cache_eligible ? 'rgba(0,212,170,.3)' : 'rgba(245,158,11,.3)'};
+                border-radius:5px;padding:5px 10px;">
+      <span class="chip ${l.name}" style="font-size:10px;">${l.name}</span>
+      ${l.cache_eligible
+        ? `<span style="font-size:11px;color:var(--accent2);">${l.tokens} tok ⚡ cached</span>`
+        : `<span style="font-size:11px;color:var(--warn);">${l.tokens} tok ↑ sent</span>`}
     </div>`).join('');
 
-  const rows = d.savings.map(s => `
-    <tr>
-      <td>${s.calls} calls</td>
-      <td>${s.naive.toLocaleString()}</td>
-      <td>${s.ics.toLocaleString()}</td>
-      <td class="saved">-${s.saved.toLocaleString()} (${s.pct}%)</td>
-    </tr>`).join('');
-
-  return `
+  // ── Top stats ─────────────────────────────────────────────────────────────
+  const cachedTokens  = d.ics_total - d.dynamic_tokens;
+  const cacheRatio    = d.ics_total ? Math.round(cachedTokens / d.ics_total * 100) : 0;
+  const stats = `
     <div class="stats">
-      <div class="stat"><div class="stat-value">${d.naive_tokens.toLocaleString()}</div><div class="stat-label">Naive tokens/call</div></div>
-      <div class="stat"><div class="stat-value">${d.ics_total.toLocaleString()}</div><div class="stat-label">ICS total/call</div></div>
-      <div class="stat"><div class="stat-value">${d.dynamic_tokens.toLocaleString()}</div><div class="stat-label">Dynamic only</div></div>
-    </div>
-    <h3 style="font-size:13px;margin-bottom:10px;">Layer breakdown</h3>
-    <div style="margin-bottom:20px;">${layers}</div>
-    <h3 style="font-size:13px;margin-bottom:10px;">Cumulative savings</h3>
+      <div class="stat">
+        <div class="stat-value">${d.naive_tokens.toLocaleString()}</div>
+        <div class="stat-label">Naive tokens / call</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" style="color:var(--accent2);">${cachedTokens.toLocaleString()}</div>
+        <div class="stat-label">Cached (stable)</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" style="color:var(--warn);">${d.dynamic_tokens.toLocaleString()}</div>
+        <div class="stat-label">Dynamic (resent)</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">${cacheRatio}%</div>
+        <div class="stat-label">Cache ratio</div>
+      </div>
+    </div>`;
+
+  // ── Layer breakdown with bar visualisation ────────────────────────────────
+  const maxTok = Math.max(...d.layers.map(l => l.tokens));
+  const layers = `
+    <h3 style="font-size:13px;margin-bottom:10px;">Layer token breakdown</h3>
+    <div class="card" style="margin-bottom:20px;">
+      <table>
+        <thead>
+          <tr>
+            <th style="text-align:left;">Layer</th>
+            <th>Tokens</th>
+            <th>% of prompt</th>
+            <th style="text-align:left;width:40%;">Distribution</th>
+            <th>Caching</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${d.layers.map(l => {
+            const pct   = d.ics_total ? Math.round(l.tokens / d.ics_total * 100) : 0;
+            const barW  = maxTok ? Math.round(l.tokens / maxTok * 100) : 0;
+            const color = l.cache_eligible ? 'var(--accent2)' : 'var(--warn)';
+            return `<tr>
+              <td><span class="chip ${l.name}">${l.name}</span></td>
+              <td>${l.tokens.toLocaleString()}</td>
+              <td>${pct}%</td>
+              <td>
+                <div style="background:var(--border);border-radius:3px;height:8px;overflow:hidden;">
+                  <div style="width:${barW}%;height:100%;background:${color};border-radius:3px;"></div>
+                </div>
+              </td>
+              <td style="text-align:center;">
+                ${l.cache_eligible
+                  ? '<span style="color:var(--accent2);">⚡ cached</span>'
+                  : '<span style="color:var(--warn);">↑ resent</span>'}
+              </td>
+            </tr>`;
+          }).join('')}
+          <tr style="border-top:2px solid var(--border);">
+            <td><strong>Total</strong></td>
+            <td><strong>${d.ics_total.toLocaleString()}</strong></td>
+            <td>100%</td>
+            <td></td>
+            <td></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>`;
+
+  // ── Call-by-call simulation (first 5 calls) ───────────────────────────────
+  const simCalls = [1,2,3,4,5];
+  const simRows  = simCalls.map(n => {
+    const naiveTok = d.naive_tokens * n;
+    const icsTok   = d.ics_total + d.dynamic_tokens * (n - 1);
+    const saved    = Math.max(0, naiveTok - icsTok);
+    const pct      = naiveTok ? Math.round(saved / naiveTok * 100) : 0;
+    const barNaive = 100;
+    const barIcs   = Math.round(icsTok / naiveTok * 100);
+    return `
+      <tr>
+        <td style="font-weight:600;">Call ${n}</td>
+        <td>
+          <div style="background:var(--border);border-radius:3px;height:8px;margin-bottom:3px;overflow:hidden;">
+            <div style="width:${barNaive}%;height:100%;background:var(--danger);border-radius:3px;opacity:.7;"></div>
+          </div>
+          <span style="font-size:11px;color:var(--muted);">${naiveTok.toLocaleString()} tok</span>
+        </td>
+        <td>
+          <div style="background:var(--border);border-radius:3px;height:8px;margin-bottom:3px;overflow:hidden;">
+            <div style="width:${barIcs}%;height:100%;background:var(--accent2);border-radius:3px;opacity:.9;"></div>
+          </div>
+          <span style="font-size:11px;color:var(--muted);">${icsTok.toLocaleString()} tok</span>
+        </td>
+        <td class="saved">-${saved.toLocaleString()}</td>
+        <td class="saved">${pct}%</td>
+        <td style="font-size:11px;color:var(--muted);">
+          ${n === 1
+            ? 'First call — all layers sent, cache seeded'
+            : `Cached layers skipped — only ${d.dynamic_tokens.toLocaleString()} dynamic tokens sent`}
+        </td>
+      </tr>`;
+  }).join('');
+
+  const simulation = `
+    <h3 style="font-size:13px;margin-bottom:6px;">Call-by-call simulation</h3>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+      The first call pays the full cost to seed the cache. Every subsequent call only sends the dynamic layers.
+    </p>
+    <div class="card" style="margin-bottom:20px;overflow-x:auto;">
+      <table>
+        <thead>
+          <tr>
+            <th style="text-align:left;">Call #</th>
+            <th style="text-align:left;">Naive tokens</th>
+            <th style="text-align:left;">ICS tokens</th>
+            <th>Saved</th>
+            <th>Saving %</th>
+            <th style="text-align:left;">What happens</th>
+          </tr>
+        </thead>
+        <tbody>${simRows}</tbody>
+      </table>
+    </div>`;
+
+  // ── Cumulative savings table with inline bar ──────────────────────────────
+  const maxSaved = Math.max(...d.savings.map(s => s.saved));
+  const rows = d.savings.map(s => {
+    const barW = maxSaved ? Math.round(s.saved / maxSaved * 100) : 0;
+    return `
+      <tr>
+        <td>${s.calls} calls</td>
+        <td style="color:var(--danger);">${s.naive.toLocaleString()}</td>
+        <td style="color:var(--accent2);">${s.ics.toLocaleString()}</td>
+        <td>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div style="flex:1;background:var(--border);border-radius:3px;height:8px;overflow:hidden;min-width:60px;">
+              <div style="width:${barW}%;height:100%;background:var(--accent);border-radius:3px;"></div>
+            </div>
+            <span class="saved" style="white-space:nowrap;">-${s.saved.toLocaleString()} (${s.pct}%)</span>
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+
+  const cumulative = `
+    <h3 style="font-size:13px;margin-bottom:6px;">Cumulative savings at scale</h3>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+      Savings compound with every call — the higher the call volume, the bigger the advantage.
+    </p>
     <div class="card">
       <table>
-        <thead><tr><th>Scale</th><th>Naive</th><th>ICS</th><th>Saved</th></tr></thead>
+        <thead>
+          <tr>
+            <th style="text-align:left;">Scale</th>
+            <th style="color:var(--danger);">Naive total</th>
+            <th style="color:var(--accent2);">ICS total</th>
+            <th style="text-align:left;">Tokens saved</th>
+          </tr>
+        </thead>
         <tbody>${rows}</tbody>
       </table>
     </div>`;
+
+  return stats + layers + simulation + cumulative;
 }
 
 // ── CHAT ────────────────────────────────────────────────────────────────────
