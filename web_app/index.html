@@ -541,19 +541,24 @@
       <!-- Real benchmark row -->
       <div class="card" style="margin-bottom:20px;border-color:var(--accent2);background:rgba(0,212,170,.04);">
         <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
-          <div>
-            <div style="font-weight:700;font-size:13px;margin-bottom:3px;">
-              ⚡ Run Real Benchmark
-            </div>
-            <div style="font-size:12px;color:var(--muted);">
-              Makes actual Anthropic API calls and returns ground-truth token counts + real cost data.
-              Uses <code>claude-haiku-4-5-20251001</code> with <code>max_tokens=1</code> — cost is negligible (~$0.0001 per run).
+          <div style="flex:1;min-width:0;">
+            <div style="font-weight:700;font-size:13px;margin-bottom:3px;">⚡ Run Real Benchmark</div>
+            <div style="font-size:12px;color:var(--muted);" id="bench-desc">
+              Makes actual API calls and returns ground-truth token counts + real cost data.
+              Uses <code>max_tokens=1</code> — cost is negligible (~$0.0001 per run).
             </div>
           </div>
-          <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;">
+          <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap;">
             <div>
-              <label style="margin-bottom:4px;">Calls to simulate</label>
-              <select id="bench-n-calls" style="width:80px;">
+              <label style="margin-bottom:4px;">Provider</label>
+              <select id="bench-provider" style="width:115px;" onchange="onProviderChange()">
+                <option value="anthropic">🟣 Anthropic</option>
+                <option value="openai">🟢 OpenAI</option>
+              </select>
+            </div>
+            <div>
+              <label style="margin-bottom:4px;">Calls</label>
+              <select id="bench-n-calls" style="width:70px;">
                 <option value="2">2</option>
                 <option value="3" selected>3</option>
                 <option value="4">4</option>
@@ -567,7 +572,7 @@
           </div>
         </div>
         <div id="bench-no-key" style="display:none;margin-top:10px;font-size:12px;color:var(--warn);">
-          ⚠️ Requires ANTHROPIC_API_KEY — restart server with the key set to enable this.
+          ⚠️ No API key set — restart the server with the relevant key to enable this.
         </div>
       </div>
 
@@ -580,11 +585,24 @@
       <h2>Live Chat</h2>
       <p class="subtitle">Chat with the Orion DevAssist using ICS-structured prompts and prompt caching.</p>
 
-      <div id="chat-no-key" class="card" style="display:none;border-color:var(--warn);">
-        <strong>⚠️ ANTHROPIC_API_KEY not set</strong>
-        <p style="color:var(--muted);margin-top:6px;font-size:12px;">
-          Restart the server with <code>ANTHROPIC_API_KEY=sk-ant-… python web_app/app.py</code>
-        </p>
+      <!-- Provider + key status bar -->
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
+        <div>
+          <label style="margin-bottom:4px;">Provider</label>
+          <select id="chat-provider" style="width:130px;" onchange="onChatProviderChange()">
+            <option value="anthropic">🟣 Anthropic</option>
+            <option value="openai">🟢 OpenAI</option>
+          </select>
+        </div>
+        <div id="chat-no-key" class="card" style="display:none;border-color:var(--warn);padding:8px 12px;flex:1;">
+          <strong id="chat-no-key-msg">⚠️ API key not set</strong>
+          <span style="color:var(--muted);margin-left:8px;font-size:12px;" id="chat-no-key-hint">
+            Restart with the key set to enable chat.
+          </span>
+        </div>
+        <div id="chat-model-badge" style="font-size:11px;color:var(--muted);margin-left:auto;">
+          Model: <code id="chat-model-name">claude-opus-4-6</code>
+        </div>
       </div>
 
       <div class="chat-container">
@@ -660,23 +678,62 @@ let chatDecisions = ['add retry logic to NACHA file generator'];
   await Promise.all([checkStatus(), loadSamples()]);
 })();
 
+let _status = {};  // cached /api/status response
+
 async function checkStatus() {
   try {
     const r = await fetch('/api/status');
-    const d = await r.json();
+    _status = await r.json();
     const dot  = document.getElementById('api-dot');
     const text = document.getElementById('api-text');
-    if (d.api_key_set) {
-      dot.className  = 'dot ok';
-      text.textContent = 'API key set';
+    const anyKey = _status.api_key_set || _status.openai_key_set;
+    if (anyKey) {
+      dot.className    = 'dot ok';
+      text.textContent = _status.api_key_set && _status.openai_key_set
+        ? 'Anthropic + OpenAI keys set'
+        : _status.api_key_set ? 'Anthropic key set' : 'OpenAI key set';
     } else {
-      dot.className  = 'dot bad';
+      dot.className    = 'dot bad';
       text.textContent = 'No API key';
-      document.getElementById('chat-no-key').style.display = 'block';
-      document.getElementById('bench-btn').disabled = true;
-      document.getElementById('bench-no-key').style.display = 'block';
     }
+    onProviderChange();
+    onChatProviderChange();
   } catch { /* ignore */ }
+}
+
+function onProviderChange() {
+  const provider = document.getElementById('bench-provider').value;
+  const hasKey = provider === 'openai' ? _status.openai_key_set : _status.api_key_set;
+  const noKeyEl = document.getElementById('bench-no-key');
+  const benchBtn = document.getElementById('bench-btn');
+  noKeyEl.style.display = hasKey ? 'none' : 'block';
+  benchBtn.disabled = !hasKey;
+  // update model hint
+  const descEl = document.getElementById('bench-desc');
+  if (provider === 'openai') {
+    descEl.innerHTML = 'Makes actual OpenAI API calls. Uses <code>gpt-4o-mini</code> with <code>max_tokens=1</code>. Caching is automatic — no markup needed. Cost ~$0.000015 per run.';
+  } else {
+    descEl.innerHTML = 'Makes actual Anthropic API calls. Uses <code>claude-haiku-4-5-20251001</code> with <code>max_tokens=1</code>. Cost ~$0.0001 per run.';
+  }
+}
+
+function onChatProviderChange() {
+  const provider = document.getElementById('chat-provider').value;
+  const hasKey = provider === 'openai' ? _status.openai_key_set : _status.api_key_set;
+  const noKeyEl  = document.getElementById('chat-no-key');
+  const sendBtn  = document.getElementById('chat-send');
+  const modelName = document.getElementById('chat-model-name');
+  noKeyEl.style.display = hasKey ? 'none' : 'flex';
+  sendBtn.disabled = !hasKey;
+  if (provider === 'openai') {
+    modelName.textContent = 'gpt-4o-mini';
+    document.getElementById('chat-no-key-msg').textContent = '⚠️ OPENAI_API_KEY not set';
+    document.getElementById('chat-no-key-hint').textContent = 'Restart with OPENAI_API_KEY=sk-… python web_app/app.py';
+  } else {
+    modelName.textContent = 'claude-opus-4-6';
+    document.getElementById('chat-no-key-msg').textContent = '⚠️ ANTHROPIC_API_KEY not set';
+    document.getElementById('chat-no-key-hint').textContent = 'Restart with ANTHROPIC_API_KEY=sk-ant-… python web_app/app.py';
+  }
 }
 
 async function loadSamples() {
@@ -1202,26 +1259,28 @@ function renderCompareResult(d) {
 async function runBenchmark() {
   const scenario_id = document.getElementById('compare-scenario').value;
   const n_calls     = parseInt(document.getElementById('bench-n-calls').value);
+  const provider    = document.getElementById('bench-provider').value;
   const el          = document.getElementById('bench-result');
   const btn         = document.getElementById('bench-btn');
 
+  const providerLabel = provider === 'openai' ? 'OpenAI' : 'Anthropic';
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span>Running…';
   el.innerHTML = `
     <div class="card" style="color:var(--muted);font-size:13px;">
       <span class="spinner"></span>
-      Making ${n_calls} real API calls to Anthropic… this takes ~${n_calls * 3}–${n_calls * 6}s
+      Making ${n_calls} real API calls to ${providerLabel}… this takes ~${n_calls * 2}–${n_calls * 5}s
     </div>`;
 
   try {
     const r = await fetch('/api/benchmark', {
       method: 'POST',
       headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({scenario_id, n_calls}),
+      body: JSON.stringify({scenario_id, n_calls, provider}),
     });
     const d = await r.json();
     if (!r.ok) throw new Error(d.detail || 'Benchmark failed');
-    el.innerHTML = renderBenchmarkResult(d);
+    el.innerHTML = renderBenchmarkResult(d, provider);
   } catch (e) {
     el.innerHTML = `<div class="finding critical"><div class="rule">Error</div><div>${e.message}</div></div>`;
   } finally {
@@ -1230,7 +1289,8 @@ async function runBenchmark() {
   }
 }
 
-function renderBenchmarkResult(d) {
+function renderBenchmarkResult(d, provider = 'anthropic') {
+  const providerLabel = provider === 'openai' ? 'OpenAI (gpt-4o-mini)' : 'Anthropic (claude-haiku-4-5)';
   const s = d.summary;
 
   // ── Cache warning banner ─────────────────────────────────────────────────
@@ -1286,14 +1346,14 @@ function renderBenchmarkResult(d) {
   }).join('');
 
   const perCallSection = `
-    <h3 style="font-size:13px;margin-bottom:8px;">Real API calls — per-call usage</h3>
+    <h3 style="font-size:13px;margin-bottom:8px;">Real API calls — per-call usage <span style="font-weight:400;color:var(--muted);font-size:11px;">via ${escHtml(providerLabel)}</span></h3>
     <div class="card" style="margin-bottom:16px;overflow-x:auto;">
       <table>
         <thead>
           <tr>
             <th style="text-align:left;">Call</th>
             <th>Input tokens</th>
-            <th style="color:var(--accent2);">Cache write</th>
+            <th style="color:var(--accent2);">${provider === 'openai' ? 'Cache (auto)' : 'Cache write'}</th>
             <th style="color:var(--accent2);">Cache read</th>
             <th>Total billed</th>
             <th style="text-align:left;">Status</th>
@@ -1428,10 +1488,12 @@ async function sendChat() {
   let buffer = '';
 
   try {
+    const provider = document.getElementById('chat-provider').value;
     const params = new URLSearchParams({
       message:   msg,
       topics:    chatTopics.join(','),
       decisions: chatDecisions.join(','),
+      provider,
     });
 
     const es = new EventSource(`/api/chat/stream?${params}`);

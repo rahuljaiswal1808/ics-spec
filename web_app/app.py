@@ -648,6 +648,7 @@ class CompareRequest(BaseModel):
 class BenchmarkRequest(BaseModel):
     scenario_id: str
     n_calls: int = 3  # how many ICS calls to make (max 5)
+    provider: str = "anthropic"  # "anthropic" or "openai"
 
 
 # ── Routes ────────────────────────────────────────────────────────────────────
@@ -662,12 +663,19 @@ async def index():
 async def api_status():
     try:
         import anthropic as _a  # noqa: F401
-        installed = True
+        anthropic_ok = True
     except ImportError:
-        installed = False
+        anthropic_ok = False
+    try:
+        import openai as _o  # noqa: F401
+        openai_ok = True
+    except ImportError:
+        openai_ok = False
     return {
-        "anthropic_installed": installed,
-        "api_key_set": bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "anthropic_installed": anthropic_ok,
+        "api_key_set":         bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "openai_installed":    openai_ok,
+        "openai_key_set":      bool(os.environ.get("OPENAI_API_KEY")),
     }
 
 
@@ -814,18 +822,11 @@ async def api_compare(req: CompareRequest):
 @app.post("/api/benchmark")
 async def api_benchmark(req: BenchmarkRequest):
     """
-    Make real Anthropic API calls and return actual token usage per call.
+    Make real API calls (Anthropic or OpenAI) and return actual token usage per call.
     Uses max_tokens=1 to keep output cost negligible — we only care about input usage.
-    Requires ANTHROPIC_API_KEY to be set.
     """
-    try:
-        import anthropic
-    except ImportError:
-        raise HTTPException(400, "anthropic package not installed. Run: pip install anthropic")
-
-    api_key = os.environ.get("ANTHROPIC_API_KEY")
-    if not api_key:
-        raise HTTPException(400, "ANTHROPIC_API_KEY is not set")
+    if req.provider not in ("anthropic", "openai"):
+        raise HTTPException(400, f"Unknown provider '{req.provider}'. Use 'anthropic' or 'openai'.")
 
     scenario = SCENARIOS.get(req.scenario_id)
     if not scenario:
@@ -841,169 +842,239 @@ async def api_benchmark(req: BenchmarkRequest):
         ics.output_contract(scenario["output"]),
     ]
 
-    # ── Build system parts for proper prompt caching ──────────────────────────
-    # Anthropic caches everything UP TO a cache_control marker as one prefix.
-    # Rules:
-    #   1. All stable (cache-eligible) blocks must come BEFORE dynamic blocks.
-    #   2. Put ONE cache_control on the LAST stable block so the single cache
-    #      prefix covers all stable content cumulatively (≥4096 tokens for claude-haiku-4-5).
-    #   3. Dynamic blocks follow with no cache_control — resent every call.
-    stable_blocks  = [b for b in blocks if b.cache_eligible]
-    dynamic_blocks = [b for b in blocks if not b.cache_eligible]
+    per_call: list[dict] = []
 
-    log_info(f"[benchmark] scenario={req.scenario_id}  n_calls={n_calls}")
-    log_info(f"[benchmark] stable blocks : {[b.layer.value for b in stable_blocks]}")
-    log_info(f"[benchmark] dynamic blocks: {[b.layer.value for b in dynamic_blocks]}")
-
-    system_parts = []
-    for i, block in enumerate(stable_blocks):
-        part: dict = {"type": "text", "text": str(block)}
-        is_last = (i == len(stable_blocks) - 1)
-        if is_last:
-            part["cache_control"] = {"type": "ephemeral"}
-        tok = est_tokens(str(block))
-        log_info(f"[benchmark]   stable[{i}] layer={block.layer.value}  chars={len(str(block))}  est_tokens={tok}  cache_control={is_last}")
-        system_parts.append(part)
-
-    cumulative = sum(est_tokens(str(b)) for b in stable_blocks)
-    log_info(f"[benchmark] cumulative stable tokens (est): {cumulative}  threshold: 4096")
-    if cumulative < 4096:
-        log_warn(f"[benchmark] WARNING: cumulative stable tokens {cumulative} < 4096 — caching will NOT trigger")
-    else:
-        log_info(f"[benchmark] cumulative stable tokens OK ({cumulative} >= 4096) — caching should trigger")
-
-    for block in dynamic_blocks:
-        tok = est_tokens(str(block))
-        log_info(f"[benchmark]   dynamic  layer={block.layer.value}  chars={len(str(block))}  est_tokens={tok}")
-        system_parts.append({"type": "text", "text": str(block)})
-
-    log_info(f"[benchmark] system_parts count: {len(system_parts)}")
-
-    client = anthropic.Anthropic(api_key=api_key)
-    per_call = []
-
-    for i in range(n_calls):
-        log_info(f"[benchmark] → API call {i+1}/{n_calls} ...")
+    # ── Anthropic path ────────────────────────────────────────────────────────
+    if req.provider == "anthropic":
         try:
-            resp = client.messages.create(
-                model="claude-haiku-4-5-20251001",  # cheapest model — we only need usage data
+            import anthropic
+        except ImportError:
+            raise HTTPException(400, "anthropic package not installed. Run: pip install anthropic")
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            raise HTTPException(400, "ANTHROPIC_API_KEY is not set")
+
+        # Anthropic caches everything UP TO a cache_control marker.
+        # Put ONE marker on the LAST stable block so the cumulative prefix is cached.
+        stable_blocks  = [b for b in blocks if b.cache_eligible]
+        dynamic_blocks = [b for b in blocks if not b.cache_eligible]
+
+        log_info(f"[benchmark/anthropic] scenario={req.scenario_id}  n_calls={n_calls}")
+        log_info(f"[benchmark/anthropic] stable : {[b.layer.value for b in stable_blocks]}")
+        log_info(f"[benchmark/anthropic] dynamic: {[b.layer.value for b in dynamic_blocks]}")
+
+        system_parts: list[dict] = []
+        for i, block in enumerate(stable_blocks):
+            part: dict = {"type": "text", "text": str(block)}
+            if i == len(stable_blocks) - 1:
+                part["cache_control"] = {"type": "ephemeral"}
+            system_parts.append(part)
+        for block in dynamic_blocks:
+            system_parts.append({"type": "text", "text": str(block)})
+
+        cumulative = sum(est_tokens(str(b)) for b in stable_blocks)
+        cache_threshold = 4096
+        log_info(f"[benchmark/anthropic] cumulative stable tokens (est): {cumulative}  threshold: {cache_threshold}")
+        if cumulative < cache_threshold:
+            log_warn(f"[benchmark/anthropic] WARNING: {cumulative} < {cache_threshold} — caching will NOT trigger")
+
+        client = anthropic.Anthropic(api_key=api_key)
+        for i in range(n_calls):
+            log_info(f"[benchmark/anthropic] → call {i+1}/{n_calls}")
+            try:
+                resp = client.messages.create(
+                    model="claude-haiku-4-5-20251001",
+                    max_tokens=1,
+                    system=system_parts,
+                    messages=[{"role": "user", "content": scenario["task"]}],
+                )
+                u = resp.usage
+                inp          = u.input_tokens
+                cache_create = getattr(u, "cache_creation_input_tokens", 0) or 0
+                cache_read   = getattr(u, "cache_read_input_tokens",    0) or 0
+                log_info(f"[benchmark/anthropic] ← call {i+1}: input={inp} write={cache_create} read={cache_read}")
+                per_call.append({
+                    "call": i + 1, "input_tokens": inp,
+                    "cache_creation": cache_create, "cache_read": cache_read,
+                    "output_tokens": u.output_tokens,
+                    "total_billed": inp + cache_create + cache_read,
+                    "cache_hit": cache_read > 0,
+                })
+            except Exception as exc:
+                log_error(f"[benchmark/anthropic] ✗ call {i+1}: {exc}")
+                per_call.append({"call": i + 1, "error": str(exc)})
+
+        any_cache_write = any(c.get("cache_creation", 0) > 0 for c in per_call if "error" not in c)
+        any_cache_read  = any(c.get("cache_read",     0) > 0 for c in per_call if "error" not in c)
+        cacheable_est   = sum(est_tokens(str(b)) for b in blocks if b.cache_eligible)
+
+        first = per_call[0] if per_call and "error" not in per_call[0] else None
+        summary: dict = {}
+        if first:
+            real_total   = first["input_tokens"] + first["cache_creation"]
+            real_dynamic = first["input_tokens"]
+            real_cached  = first["cache_creation"]
+            est_total    = est_tokens("".join(str(b) for b in blocks))
+            est_dynamic  = sum(est_tokens(str(b)) for b in blocks if not b.cache_eligible)
+
+            PRICE_INPUT       = 0.80 / 1_000_000
+            PRICE_CACHE_WRITE = 1.00 / 1_000_000
+            PRICE_CACHE_READ  = 0.08 / 1_000_000
+            naive_cost_per_call = real_total * PRICE_INPUT
+            ics_call1_cost  = real_dynamic * PRICE_INPUT + real_cached * PRICE_CACHE_WRITE
+            ics_repeat_cost = real_dynamic * PRICE_INPUT + real_cached * PRICE_CACHE_READ
+
+            calls_data = []
+            for n in [1, 2, 3, 5, 10, 25, 50, 100]:
+                naive_c = naive_cost_per_call * n
+                ics_c   = ics_call1_cost + ics_repeat_cost * max(0, n - 1)
+                saved   = max(0.0, naive_c - ics_c)
+                calls_data.append({
+                    "calls": n,
+                    "naive_cost": round(naive_c, 6),
+                    "ics_cost":   round(ics_c, 6),
+                    "saved_cost": round(saved, 6),
+                    "pct": round(saved / naive_c * 100) if naive_c else 0,
+                })
+
+            cache_warning = None
+            if not any_cache_write:
+                if cacheable_est < cache_threshold:
+                    cache_warning = (
+                        f"Caching was NOT triggered. Anthropic requires a minimum of {cache_threshold} tokens "
+                        f"in the stable cache prefix. This scenario's stable layers are only ~{cacheable_est} "
+                        f"tokens — below the threshold. Use 'Orion DevAssist (Full — benchmark)' to see real cache hits."
+                    )
+                else:
+                    cache_warning = (
+                        f"Caching was NOT triggered despite ~{cacheable_est} estimated stable tokens. "
+                        f"Restart the server and try again."
+                    )
+            elif any_cache_write and not any_cache_read:
+                cache_warning = (
+                    "Cache was written on call 1 but no cache reads were observed. "
+                    "Calls may have been too far apart (cache TTL is 5 minutes)."
+                )
+
+            summary = {
+                "real_total_tokens":    real_total,
+                "real_dynamic_tokens":  real_dynamic,
+                "real_cached_tokens":   real_cached,
+                "est_total_tokens":     est_total,
+                "est_dynamic_tokens":   est_dynamic,
+                "estimate_error_pct":   round(abs(est_total - real_total) / real_total * 100, 1) if real_total else None,
+                "price_model":          "claude-haiku-4-5-20251001 — input $0.80/MTok, cache_write $1.00/MTok, cache_read $0.08/MTok",
+                "cost_savings":         calls_data,
+                "cache_warning":        cache_warning,
+                "cache_threshold":      cache_threshold,
+                "cacheable_est_tokens": cacheable_est,
+            }
+
+        return {"per_call": per_call, "summary": summary}
+
+    # ── OpenAI path ───────────────────────────────────────────────────────────
+    # OpenAI caches automatically (no cache_control markers needed).
+    # Cache threshold: 1024 tokens. Cached usage in usage.prompt_tokens_details.cached_tokens.
+    try:
+        import openai
+    except ImportError:
+        raise HTTPException(400, "openai package not installed. Run: pip install openai")
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(400, "OPENAI_API_KEY is not set")
+
+    compiled = ics.compile(*blocks, warn=False)
+    cache_threshold = 1024  # OpenAI minimum for automatic caching
+    cacheable_est   = sum(est_tokens(str(b)) for b in blocks if b.cache_eligible)
+    total_est       = est_tokens(compiled)
+
+    log_info(f"[benchmark/openai] scenario={req.scenario_id}  n_calls={n_calls}")
+    log_info(f"[benchmark/openai] compiled prompt est_tokens={total_est}  cache_threshold={cache_threshold}")
+    if total_est < cache_threshold:
+        log_warn(f"[benchmark/openai] WARNING: {total_est} < {cache_threshold} — caching may not trigger")
+
+    client_oai = openai.OpenAI(api_key=api_key)
+    for i in range(n_calls):
+        log_info(f"[benchmark/openai] → call {i+1}/{n_calls}")
+        try:
+            resp = client_oai.chat.completions.create(
+                model="gpt-4o-mini",
                 max_tokens=1,
-                system=system_parts,
-                messages=[{"role": "user", "content": scenario["task"]}],
+                messages=[
+                    {"role": "system", "content": compiled},
+                    {"role": "user",   "content": scenario["task"]},
+                ],
             )
             u = resp.usage
-            inp          = u.input_tokens
-            cache_create = getattr(u, "cache_creation_input_tokens", 0) or 0
-            cache_read   = getattr(u, "cache_read_input_tokens",    0) or 0
-            out          = u.output_tokens
-            log_info(
-                f"[benchmark] ← call {i+1} usage: input={inp}  "
-                f"cache_write={cache_create}  cache_read={cache_read}  output={out}"
-            )
-            if cache_create == 0 and cache_read == 0:
-                log_warn(f"[benchmark]   ⚠ call {i+1}: no cache activity — check token counts above")
-            elif cache_create > 0:
-                log_info(f"[benchmark]   ✓ call {i+1}: cache WRITTEN ({cache_create} tokens)")
-            elif cache_read > 0:
-                log_info(f"[benchmark]   ✓ call {i+1}: cache HIT ({cache_read} tokens read)")
+            inp    = u.prompt_tokens
+            cached = getattr(getattr(u, "prompt_tokens_details", None), "cached_tokens", 0) or 0
+            out    = u.completion_tokens
+            non_cached = inp - cached
+            log_info(f"[benchmark/openai] ← call {i+1}: prompt={inp} cached={cached} non_cached={non_cached}")
             per_call.append({
-                "call":          i + 1,
-                "input_tokens":        inp,
-                "cache_creation":      cache_create,
-                "cache_read":          cache_read,
-                "output_tokens":       out,
-                "total_billed":        inp + cache_create + cache_read,
-                "cache_hit":           cache_read > 0,
+                "call": i + 1,
+                "input_tokens":   non_cached,   # tokens actually sent (not from cache)
+                "cache_creation": 0,            # OpenAI: automatic, no explicit write step
+                "cache_read":     cached,
+                "output_tokens":  out,
+                "total_billed":   inp,
+                "cache_hit":      cached > 0,
             })
         except Exception as exc:
-            log_error(f"[benchmark] ✗ call {i+1} FAILED: {exc}")
-            per_call.append({
-                "call":    i + 1,
-                "error":   str(exc),
-            })
+            log_error(f"[benchmark/openai] ✗ call {i+1}: {exc}")
+            per_call.append({"call": i + 1, "error": str(exc)})
 
-    # Derive ground-truth summary from call 1
+    any_cache_read = any(c.get("cache_read", 0) > 0 for c in per_call if "error" not in c)
     first = per_call[0] if per_call and "error" not in per_call[0] else None
     summary = {}
-
-    # Detect whether caching was actually triggered across any call
-    any_cache_write = any(c.get("cache_creation", 0) > 0 for c in per_call if "error" not in c)
-    any_cache_read  = any(c.get("cache_read",     0) > 0 for c in per_call if "error" not in c)
-    cacheable_est   = sum(est_tokens(str(b)) for b in blocks if b.cache_eligible)
-    cache_threshold = 4096  # Anthropic minimum tokens for claude-haiku-4-5 (older Claude 3 used 1024)
-
     if first:
-        real_total   = first["input_tokens"] + first["cache_creation"]
-        real_dynamic = first["input_tokens"]   # non-cached portion
-        real_cached  = first["cache_creation"]
+        real_total   = first["total_billed"]
+        real_cached  = first["cache_read"]
+        real_dynamic = first["input_tokens"]
+        est_total    = total_est
+        est_dynamic  = sum(est_tokens(str(b)) for b in blocks if not b.cache_eligible)
 
-        est_total   = est_tokens("".join(str(b) for b in blocks))
-        est_dynamic = sum(est_tokens(str(b)) for b in blocks if not b.cache_eligible)
-
-        # cost model: input = $0.80/MTok, cache_write = $1.00/MTok, cache_read = $0.08/MTok (Haiku)
-        PRICE_INPUT        = 0.80  / 1_000_000
-        PRICE_CACHE_WRITE  = 1.00  / 1_000_000
-        PRICE_CACHE_READ   = 0.08  / 1_000_000
-        PRICE_OUTPUT       = 4.00  / 1_000_000
+        # gpt-4o-mini pricing: input $0.15/MTok, cached_input $0.075/MTok, output $0.60/MTok
+        PRICE_INPUT        = 0.150 / 1_000_000
+        PRICE_CACHED_INPUT = 0.075 / 1_000_000
 
         naive_cost_per_call = real_total * PRICE_INPUT
-        ics_call1_cost = (
-            real_dynamic * PRICE_INPUT +
-            real_cached  * PRICE_CACHE_WRITE
-        )
-        ics_repeat_cost = (
-            real_dynamic * PRICE_INPUT +
-            real_cached  * PRICE_CACHE_READ
-        )
+        # On OpenAI, cached tokens are charged at half price automatically
+        ics_call1_cost  = real_total * PRICE_INPUT           # first call — no cache yet
+        ics_repeat_cost = real_dynamic * PRICE_INPUT + real_cached * PRICE_CACHED_INPUT
 
         calls_data = []
         for n in [1, 2, 3, 5, 10, 25, 50, 100]:
-            naive_total_cost = naive_cost_per_call * n
-            ics_total_cost   = ics_call1_cost + ics_repeat_cost * max(0, n - 1)
-            saved_cost       = max(0.0, naive_total_cost - ics_total_cost)
-            pct              = round(saved_cost / naive_total_cost * 100) if naive_total_cost else 0
+            naive_c = naive_cost_per_call * n
+            ics_c   = ics_call1_cost + ics_repeat_cost * max(0, n - 1)
+            saved   = max(0.0, naive_c - ics_c)
             calls_data.append({
-                "calls":      n,
-                "naive_cost": round(naive_total_cost, 6),
-                "ics_cost":   round(ics_total_cost,   6),
-                "saved_cost": round(saved_cost,        6),
-                "pct":        pct,
+                "calls": n,
+                "naive_cost": round(naive_c, 6),
+                "ics_cost":   round(ics_c, 6),
+                "saved_cost": round(saved, 6),
+                "pct": round(saved / naive_c * 100) if naive_c else 0,
             })
 
         cache_warning = None
-        if not any_cache_write:
-            if cacheable_est < cache_threshold:
-                cache_warning = (
-                    f"Caching was NOT triggered. Anthropic requires a minimum of {cache_threshold} tokens "
-                    f"in the stable cache prefix. This scenario's stable layers are only ~{cacheable_est} "
-                    f"tokens — below the threshold. Use the "
-                    f"'Orion DevAssist (Full — benchmark)' scenario to see real cache hits."
-                )
-            else:
-                cache_warning = (
-                    f"Caching was NOT triggered despite ~{cacheable_est} estimated stable tokens. "
-                    f"This usually means each individual cache_control checkpoint was below the "
-                    f"{cache_threshold}-token minimum. The block ordering has been fixed — "
-                    f"please restart the server and run again."
-                )
-        elif any_cache_write and not any_cache_read:
+        if not any_cache_read:
             cache_warning = (
-                "Cache was written on call 1 but no cache reads were observed. "
-                "Calls may have been too far apart (cache TTL is 5 minutes), or the scenario "
-                "is at the edge of the minimum token threshold."
+                f"No cache reads observed. OpenAI requires ≥{cache_threshold} tokens and "
+                f"the prompt prefix must match exactly across calls. "
+                f"This scenario is ~{total_est} tokens estimated."
             )
 
         summary = {
-            "real_total_tokens":   real_total,
-            "real_dynamic_tokens": real_dynamic,
-            "real_cached_tokens":  real_cached,
-            "est_total_tokens":    est_total,
-            "est_dynamic_tokens":  est_dynamic,
-            "estimate_error_pct":  round(abs(est_total - real_total) / real_total * 100, 1) if real_total else None,
-            "price_model":         "claude-haiku-4-5-20251001 — input $0.80/MTok, cache_write $1.00/MTok, cache_read $0.08/MTok",
-            "cost_savings":        calls_data,
-            "cache_warning":       cache_warning,
-            "cache_threshold":     cache_threshold,
+            "real_total_tokens":    real_total,
+            "real_dynamic_tokens":  real_dynamic,
+            "real_cached_tokens":   real_cached,
+            "est_total_tokens":     est_total,
+            "est_dynamic_tokens":   est_dynamic,
+            "estimate_error_pct":   round(abs(est_total - real_total) / real_total * 100, 1) if real_total else None,
+            "price_model":          "gpt-4o-mini — input $0.15/MTok, cached_input $0.075/MTok, output $0.60/MTok",
+            "cost_savings":         calls_data,
+            "cache_warning":        cache_warning,
+            "cache_threshold":      cache_threshold,
             "cacheable_est_tokens": cacheable_est,
         }
 
@@ -1049,6 +1120,7 @@ async def api_chat_stream(
     message:   str,
     topics:    str = Query(default=""),
     decisions: str = Query(default=""),
+    provider:  str = Query(default="anthropic"),
 ):
     topics_list    = [t.strip() for t in topics.split(",")    if t.strip()]
     decisions_list = [d.strip() for d in decisions.split(",") if d.strip()]
@@ -1056,21 +1128,7 @@ async def api_chat_stream(
     q: Q.Queue = Q.Queue()
 
     def _sync_stream() -> None:
-        """Run synchronous Anthropic streaming in a background thread."""
-        try:
-            import anthropic
-        except ImportError:
-            q.put({"type": "error", "message": "anthropic not installed. Run: pip install anthropic"})
-            q.put(None)
-            return
-
-        api_key = os.environ.get("ANTHROPIC_API_KEY")
-        if not api_key:
-            q.put({"type": "error", "message": "ANTHROPIC_API_KEY is not set"})
-            q.put(None)
-            return
-
-        client = anthropic.Anthropic(api_key=api_key)
+        """Stream from the selected provider in a background thread."""
         blocks = [
             PLATFORM_CONTEXT,
             CAPABILITIES,
@@ -1078,6 +1136,67 @@ async def api_chat_stream(
             build_task(message),
             RESPONSE_FORMAT,
         ]
+
+        if provider == "openai":
+            try:
+                import openai
+            except ImportError:
+                q.put({"type": "error", "message": "openai not installed. Run: pip install openai"})
+                q.put(None)
+                return
+            api_key = os.environ.get("OPENAI_API_KEY")
+            if not api_key:
+                q.put({"type": "error", "message": "OPENAI_API_KEY is not set"})
+                q.put(None)
+                return
+
+            compiled = ics.compile(*blocks, warn=False)
+            client_oai = openai.OpenAI(api_key=api_key)
+            try:
+                stream = client_oai.chat.completions.create(
+                    model="gpt-4o-mini",
+                    max_tokens=1024,
+                    stream=True,
+                    stream_options={"include_usage": True},
+                    messages=[
+                        {"role": "system", "content": compiled},
+                        {"role": "user",   "content": message},
+                    ],
+                )
+                usage_data: dict = {}
+                for chunk in stream:
+                    if chunk.choices and chunk.choices[0].delta.content:
+                        q.put({"type": "text", "text": chunk.choices[0].delta.content})
+                    if chunk.usage:
+                        u = chunk.usage
+                        cached = getattr(getattr(u, "prompt_tokens_details", None), "cached_tokens", 0) or 0
+                        usage_data = {
+                            "input":       u.prompt_tokens,
+                            "output":      u.completion_tokens,
+                            "cache_read":  cached,
+                            "cache_write": 0,
+                        }
+                q.put({"type": "done", "usage": usage_data})
+            except Exception as exc:
+                q.put({"type": "error", "message": str(exc)})
+            finally:
+                q.put(None)
+            return
+
+        # ── Anthropic (default) ───────────────────────────────────────────────
+        try:
+            import anthropic
+        except ImportError:
+            q.put({"type": "error", "message": "anthropic not installed. Run: pip install anthropic"})
+            q.put(None)
+            return
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if not api_key:
+            q.put({"type": "error", "message": "ANTHROPIC_API_KEY is not set"})
+            q.put(None)
+            return
+
+        client = anthropic.Anthropic(api_key=api_key)
         system_parts = []
         for block in blocks:
             part: dict = {"type": "text", "text": str(block)}
@@ -1109,7 +1228,7 @@ async def api_chat_stream(
         except Exception as exc:
             q.put({"type": "error", "message": str(exc)})
         finally:
-            q.put(None)  # sentinel
+            q.put(None)
 
     threading.Thread(target=_sync_stream, daemon=True).start()
 
@@ -1132,7 +1251,9 @@ async def api_chat_stream(
 if __name__ == "__main__":
     host = os.environ.get("HOST", "0.0.0.0")
     port = int(os.environ.get("PORT", "8080"))
-    api_key_status = "✓  set" if os.environ.get("ANTHROPIC_API_KEY") else "✗  not set (chat tab disabled)"
-    print(f"ICS Demo  →  http://localhost:{port}")
-    print(f"API key   →  {api_key_status}")
+    anthropic_status = "✓  set" if os.environ.get("ANTHROPIC_API_KEY") else "✗  not set"
+    openai_status    = "✓  set" if os.environ.get("OPENAI_API_KEY")    else "✗  not set"
+    print(f"ICS Demo         →  http://localhost:{port}")
+    print(f"ANTHROPIC_API_KEY→  {anthropic_status}")
+    print(f"OPENAI_API_KEY   →  {openai_status}")
     uvicorn.run(app, host=host, port=port, reload=False)
