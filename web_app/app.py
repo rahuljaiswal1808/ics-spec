@@ -906,8 +906,10 @@ async def api_benchmark(req: BenchmarkRequest):
             except Exception as exc:
                 log_error(f"[benchmark/anthropic] ✗ call {i+1}: {exc}")
                 per_call.append({"call": i + 1, "error": str(exc)})
-
-        any_cache_write = any(c.get("cache_creation", 0) > 0 for c in per_call if "error" not in c)
+                # Auth errors will fail on every call — stop immediately
+                if "401" in str(exc) or "authentication" in str(exc).lower() or "api_key" in str(exc).lower():
+                    log_error("[benchmark/anthropic] Auth error — stopping early")
+                    break
         any_cache_read  = any(c.get("cache_read",     0) > 0 for c in per_call if "error" not in c)
         cacheable_est   = sum(est_tokens(str(b)) for b in blocks if b.cache_eligible)
 
@@ -1030,6 +1032,10 @@ async def api_benchmark(req: BenchmarkRequest):
         except Exception as exc:
             log_error(f"[benchmark/openai] ✗ call {i+1}: {exc}")
             per_call.append({"call": i + 1, "error": str(exc)})
+            # Auth errors will fail on every call — stop immediately
+            if "401" in str(exc) or "invalid_api_key" in str(exc) or "authentication" in str(exc).lower():
+                log_error("[benchmark/openai] Auth error — stopping early")
+                break
 
     any_cache_read = any(c.get("cache_read", 0) > 0 for c in per_call if "error" not in c)
     first = per_call[0] if per_call and "error" not in per_call[0] else None
