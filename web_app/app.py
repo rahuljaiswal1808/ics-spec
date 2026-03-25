@@ -710,6 +710,20 @@ async def api_build(req: BuildRequest):
     total    = sum(est_tokens(b.content) for b in blocks)
     cached   = sum(est_tokens(b.content) for b in blocks if b.cache_eligible)
 
+    # Raw (pre-ICS) prompt: flat concatenation the way a naive developer would write it
+    _label_map = {
+        "IMMUTABLE_CONTEXT":    "System Context",
+        "CAPABILITY_DECLARATION": "Capabilities",
+        "SESSION_STATE":        "Session State",
+        "TASK_PAYLOAD":         "Task",
+        "OUTPUT_CONTRACT":      "Output Format",
+    }
+    raw_sections = [
+        f"# {_label_map.get(b.layer.value, b.layer.value)}\n{b.content}"
+        for b in blocks
+    ]
+    raw_prompt = "\n\n".join(raw_sections)
+
     return {
         "scenario_name": scenario["name"],
         "blocks": [
@@ -722,6 +736,7 @@ async def api_build(req: BuildRequest):
             for b in blocks
         ],
         "compiled":      compiled,
+        "raw_prompt":    raw_prompt,
         "total_tokens":  total,
         "cached_tokens": cached,
         "cache_pct":     round(cached / total * 100) if total else 0,

@@ -339,6 +339,49 @@
     ::-webkit-scrollbar { width: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
     ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ── Prompt view toggle ── */
+    .prompt-toggle {
+      display: inline-flex;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      margin-bottom: 12px;
+    }
+    .prompt-toggle button {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      font-size: 12px;
+      padding: 6px 14px;
+      cursor: pointer;
+      transition: background .15s, color .15s;
+    }
+    .prompt-toggle button.active {
+      background: var(--accent);
+      color: #fff;
+    }
+    .prompt-view { display: none; }
+    .prompt-view.active { display: block; }
+
+    /* ── Side-by-side diff view ── */
+    .prompt-split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .prompt-split .pane-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      margin-bottom: 8px;
+    }
+    .pane-label.raw  { color: var(--warn); }
+    .pane-label.ics  { color: var(--accent2); }
+    @media (max-width: 720px) {
+      .prompt-split { grid-template-columns: 1fr; }
+    }
   </style>
 </head>
 <body>
@@ -730,6 +773,8 @@ async function runBuild() {
 }
 
 function renderBuildResult(d) {
+  const uid = 'bv' + Date.now();   // unique id so multiple builds don't collide
+
   const stats = `
     <div class="stats">
       <div class="stat"><div class="stat-value">${d.blocks.length}</div><div class="stat-label">Blocks</div></div>
@@ -754,17 +799,73 @@ function renderBuildResult(d) {
       <pre style="margin-top:10px;">${escHtml(b.content)}</pre>
     </div>`).join('');
 
-  const compiled = `
-    <div class="card">
-      <div class="card-header">
-        <span class="card-title">Compiled prompt</span>
-        <button class="btn secondary" style="font-size:11px;padding:4px 10px;"
-          onclick="copyText(${JSON.stringify(d.compiled)})">Copy</button>
+  // ── Raw vs ICS prompt viewer ──────────────────────────────────────────────
+  const rawTokens = d.total_tokens;   // same content, different structure
+  const promptViewer = `
+    <div class="card" style="margin-top:8px;">
+      <div class="card-header" style="margin-bottom:10px;">
+        <span class="card-title">Prompt viewer</span>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <div class="prompt-toggle" id="${uid}-toggle">
+            <button class="active" onclick="switchPromptView('${uid}','split')">Side-by-side</button>
+            <button onclick="switchPromptView('${uid}','raw')">Raw (pre-ICS)</button>
+            <button onclick="switchPromptView('${uid}','ics')">ICS Compiled</button>
+          </div>
+          <button class="btn secondary" id="${uid}-copy-raw" style="font-size:11px;padding:4px 10px;display:none;"
+            onclick="copyText(${JSON.stringify(d.raw_prompt)})">Copy raw</button>
+          <button class="btn secondary" id="${uid}-copy-ics" style="font-size:11px;padding:4px 10px;"
+            onclick="copyText(${JSON.stringify(d.compiled)})">Copy ICS</button>
+        </div>
       </div>
-      <pre>${escHtml(d.compiled)}</pre>
+
+      <!-- Side-by-side (default) -->
+      <div class="prompt-view active" id="${uid}-view-split">
+        <div class="prompt-split">
+          <div>
+            <div class="pane-label raw">⚠ Raw — pre-ICS (unstructured)</div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">
+              ${rawTokens.toLocaleString()} tokens · no caching metadata · no layer boundaries
+            </div>
+            <pre style="max-height:420px;overflow-y:auto;">${escHtml(d.raw_prompt)}</pre>
+          </div>
+          <div>
+            <div class="pane-label ics">⚡ ICS Compiled (structured)</div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">
+              ${rawTokens.toLocaleString()} tokens · ${d.cache_pct}% cache-eligible · explicit layer boundaries
+            </div>
+            <pre style="max-height:420px;overflow-y:auto;">${escHtml(d.compiled)}</pre>
+          </div>
+        </div>
+      </div>
+
+      <!-- Raw only -->
+      <div class="prompt-view" id="${uid}-view-raw">
+        <div class="pane-label raw" style="margin-bottom:8px;">⚠ Raw prompt — pre-ICS (unstructured flat text)</div>
+        <pre>${escHtml(d.raw_prompt)}</pre>
+      </div>
+
+      <!-- ICS only -->
+      <div class="prompt-view" id="${uid}-view-ics">
+        <div class="pane-label ics" style="margin-bottom:8px;">⚡ ICS Compiled — structured with layer boundaries</div>
+        <pre>${escHtml(d.compiled)}</pre>
+      </div>
     </div>`;
 
-  return stats + blocks + compiled;
+  return stats + blocks + promptViewer;
+}
+
+function switchPromptView(uid, mode) {
+  ['split','raw','ics'].forEach(m => {
+    document.getElementById(`${uid}-view-${m}`).classList.toggle('active', m === mode);
+  });
+  document.querySelectorAll(`#${uid}-toggle button`).forEach((btn, i) => {
+    btn.classList.toggle('active', ['split','raw','ics'][i] === mode);
+  });
+  // Show/hide copy buttons
+  const copyRaw = document.getElementById(`${uid}-copy-raw`);
+  const copyIcs = document.getElementById(`${uid}-copy-ics`);
+  if (copyRaw) copyRaw.style.display = mode === 'ics' ? 'none' : 'inline-block';
+  if (copyIcs) copyIcs.style.display = mode === 'raw' ? 'none' : 'inline-block';
 }
 
 // ── CLASSIFY ────────────────────────────────────────────────────────────────
