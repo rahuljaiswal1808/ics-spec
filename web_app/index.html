@@ -1095,12 +1095,11 @@ function renderBenchmarkResult(d) {
       </div>
       <div style="margin-top:10px;font-size:12px;">
         <strong>Why?</strong> Anthropic requires a minimum of
-        <strong>${s.cache_threshold} tokens</strong> in a cacheable block.
-        This scenario's stable layers are only
-        <strong>~${s.cacheable_est_tokens} tokens</strong> — below the threshold.<br>
-        <strong>Fix:</strong> Select
-        <strong>🏦 Orion DevAssist (Full — benchmark)</strong> from the scenario list
-        and run again to see real cache hits.
+        <strong>${s.cache_threshold} tokens</strong> in the stable cache prefix.
+        This scenario's stable layers are <strong>~${s.cacheable_est_tokens} tokens</strong>
+        ${s.cacheable_est_tokens < s.cache_threshold ? '— below the threshold' : '— but block ordering put each checkpoint below the minimum individually'}.<br>
+        <strong>Fix:</strong> Restart the server to pick up the block-ordering fix,
+        then select <strong>🏦 Orion DevAssist (Full — benchmark)</strong> and run again.
       </div>
     </div>` : '';
 

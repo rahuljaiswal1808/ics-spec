@@ -636,13 +636,24 @@ async def api_benchmark(req: BenchmarkRequest):
         ics.output_contract(scenario["output"]),
     ]
 
-    # Build system parts with cache_control on eligible layers
+    # ── Build system parts for proper prompt caching ──────────────────────────
+    # Anthropic caches everything UP TO a cache_control marker as one prefix.
+    # Rules:
+    #   1. All stable (cache-eligible) blocks must come BEFORE dynamic blocks.
+    #   2. Put ONE cache_control on the LAST stable block so the single cache
+    #      prefix covers all stable content cumulatively (≥1024 tokens).
+    #   3. Dynamic blocks follow with no cache_control — resent every call.
+    stable_blocks  = [b for b in blocks if b.cache_eligible]
+    dynamic_blocks = [b for b in blocks if not b.cache_eligible]
+
     system_parts = []
-    for block in blocks:
+    for i, block in enumerate(stable_blocks):
         part: dict = {"type": "text", "text": str(block)}
-        if block.cache_eligible:
+        if i == len(stable_blocks) - 1:          # only mark the LAST stable block
             part["cache_control"] = {"type": "ephemeral"}
         system_parts.append(part)
+    for block in dynamic_blocks:
+        system_parts.append({"type": "text", "text": str(block)})
 
     client = anthropic.Anthropic(api_key=api_key)
     per_call = []
@@ -725,12 +736,20 @@ async def api_benchmark(req: BenchmarkRequest):
 
         cache_warning = None
         if not any_cache_write:
-            cache_warning = (
-                f"Caching was NOT triggered. Anthropic requires a minimum of {cache_threshold} tokens "
-                f"in a cacheable block. This scenario's stable layers are only ~{cacheable_est} tokens "
-                f"(estimated). Use the 'Orion DevAssist (Full — benchmark)' scenario which has "
-                f"1024+ tokens in stable layers to see real cache hits."
-            )
+            if cacheable_est < cache_threshold:
+                cache_warning = (
+                    f"Caching was NOT triggered. Anthropic requires a minimum of {cache_threshold} tokens "
+                    f"in the stable cache prefix. This scenario's stable layers are only ~{cacheable_est} "
+                    f"tokens — below the threshold. Use the "
+                    f"'Orion DevAssist (Full — benchmark)' scenario to see real cache hits."
+                )
+            else:
+                cache_warning = (
+                    f"Caching was NOT triggered despite ~{cacheable_est} estimated stable tokens. "
+                    f"This usually means each individual cache_control checkpoint was below the "
+                    f"{cache_threshold}-token minimum. The block ordering has been fixed — "
+                    f"please restart the server and run again."
+                )
         elif any_cache_write and not any_cache_read:
             cache_warning = (
                 "Cache was written on call 1 but no cache reads were observed. "
