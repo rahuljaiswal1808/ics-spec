@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>io.ics</groupId>
+  <artifactId>ics-runtime-java-web-demo</artifactId>
+  <name>ICS Runtime Java Web Demo</name>
+  <version>0.1.0</version>
+  <description>Javalin web server that exposes the ics-runtime-java library through the
+    same REST/SSE API as the Python web_demo — provider toggle, 3 BFSI leads,
+    SSE qualification stream, live log panel, cumulative metrics.
+
+    Build:
+      cd ics-runtime/java  &amp;&amp;  mvn install -q        # publish library to local Maven cache
+      cd ../java_web_demo  &amp;&amp;  mvn package -q        # build fat-jar
+
+    Run:
+      ANTHROPIC_API_KEY=sk-ant-...  java -jar target/ics-runtime-web-demo.jar
+      OPENAI_API_KEY=sk-...         java -jar target/ics-runtime-web-demo.jar openai
+      # → http://localhost:7862</description>
+  <build>
+    <plugins>
+      <plugin>
+        <artifactId>maven-shade-plugin</artifactId>
+        <version>3.6.0</version>
+        <executions>
+          <execution>
+            <phase>package</phase>
+            <goals>
+              <goal>shade</goal>
+            </goals>
+            <configuration>
+              <finalName>ics-runtime-web-demo</finalName>
+              <transformers>
+                <transformer>
+                  <mainClass>io.ics.webdemo.WebDemo</mainClass>
+                </transformer>
+                <transformer />
+              </transformers>
+              <filters>
+                <filter>
+                  <artifact>*:*</artifact>
+                  <excludes>
+                    <exclude>META-INF/*.SF</exclude>
+                    <exclude>META-INF/*.DSA</exclude>
+                    <exclude>META-INF/*.RSA</exclude>
+                  </excludes>
+                </filter>
+              </filters>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
+  </build>
+  <properties>
+    <maven.compiler.target>17</maven.compiler.target>
+    <maven.compiler.source>17</maven.compiler.source>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <jackson.version>2.17.1</jackson.version>
+    <javalin.version>6.3.0</javalin.version>
+  </properties>
+</project>
