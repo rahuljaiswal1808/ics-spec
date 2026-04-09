@@ -1,0 +1,1684 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ICS Demo — Orion DevAssist</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #0f1117;
+      --surface:  #1a1d27;
+      --border:   #2a2d3e;
+      --accent:   #6c63ff;
+      --accent2:  #00d4aa;
+      --warn:     #f59e0b;
+      --danger:   #ef4444;
+      --text:     #e2e8f0;
+      --muted:    #64748b;
+      --code-bg:  #0d1117;
+      --radius:   8px;
+    }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, sans-serif;
+      font-size: 14px;
+      min-height: 100vh;
+    }
+
+    /* ── Header ── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    header h1 { font-size: 18px; font-weight: 700; }
+    header .badge {
+      font-size: 11px;
+      background: var(--accent);
+      color: #fff;
+      padding: 2px 8px;
+      border-radius: 12px;
+    }
+    #api-status {
+      margin-left: auto;
+      font-size: 12px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+    .dot.ok  { background: var(--accent2); }
+    .dot.bad { background: var(--danger); }
+
+    /* ── Layout ── */
+    .container { display: flex; height: calc(100vh - 57px); }
+
+    /* ── Sidebar tabs ── */
+    nav {
+      width: 180px;
+      flex-shrink: 0;
+      background: var(--surface);
+      border-right: 1px solid var(--border);
+      padding: 16px 0;
+    }
+    nav button {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+      padding: 10px 20px;
+      background: none;
+      border: none;
+      color: var(--muted);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      text-align: left;
+      transition: color .15s, background .15s;
+    }
+    nav button:hover  { color: var(--text); background: rgba(255,255,255,.04); }
+    nav button.active { color: var(--accent); background: rgba(108,99,255,.1); }
+    nav button .icon  { font-size: 16px; }
+
+    /* ── Main panel ── */
+    main { flex: 1; overflow-y: auto; padding: 24px; }
+
+    .tab-panel { display: none; }
+    .tab-panel.active { display: block; }
+
+    h2 { font-size: 16px; font-weight: 700; margin-bottom: 4px; }
+    .subtitle { color: var(--muted); font-size: 12px; margin-bottom: 20px; }
+
+    /* ── Form controls ── */
+    label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    select, textarea {
+      width: 100%;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text);
+      padding: 8px 12px;
+      font-size: 13px;
+      outline: none;
+      transition: border-color .15s;
+    }
+    select:focus, textarea:focus { border-color: var(--accent); }
+    textarea { resize: vertical; font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+
+    .row { display: flex; gap: 12px; align-items: flex-end; margin-bottom: 16px; }
+    .row > * { flex: 1; }
+
+    button.btn {
+      padding: 8px 18px;
+      border: none;
+      border-radius: var(--radius);
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 600;
+      background: var(--accent);
+      color: #fff;
+      transition: opacity .15s;
+      white-space: nowrap;
+    }
+    button.btn:hover   { opacity: .85; }
+    button.btn:disabled{ opacity: .4; cursor: not-allowed; }
+    button.btn.secondary {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+
+    /* ── Cards ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      margin-bottom: 12px;
+    }
+    .card-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+    }
+    .card-title { font-weight: 600; font-size: 13px; }
+
+    /* ── Layer chips ── */
+    .chip {
+      display: inline-block;
+      font-size: 11px;
+      font-weight: 600;
+      padding: 2px 8px;
+      border-radius: 12px;
+      background: var(--border);
+      color: var(--muted);
+    }
+    .chip.immutable    { background: rgba(108,99,255,.2); color: #a89aff; }
+    .chip.capability   { background: rgba(0,212,170,.2);  color: #00d4aa; }
+    .chip.session      { background: rgba(245,158,11,.2); color: #fbbf24; }
+    .chip.dynamic      { background: rgba(239,68,68,.2);  color: #f87171; }
+    .chip.output_contract { background: rgba(96,165,250,.2); color: #93c5fd; }
+
+    /* ── Code block ── */
+    pre {
+      background: var(--code-bg);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px;
+      overflow-x: auto;
+      font-size: 12px;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      white-space: pre-wrap;
+      word-break: break-word;
+      color: #a9b1d6;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+
+    /* ── Stats row ── */
+    .stats {
+      display: flex;
+      gap: 16px;
+      flex-wrap: wrap;
+      margin-bottom: 16px;
+    }
+    .stat {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 16px;
+      min-width: 110px;
+    }
+    .stat-value { font-size: 22px; font-weight: 700; color: var(--accent); }
+    .stat-label { font-size: 11px; color: var(--muted); margin-top: 2px; }
+
+    /* ── Violations / warnings ── */
+    .finding {
+      border-left: 3px solid var(--border);
+      padding: 8px 12px;
+      margin-bottom: 8px;
+      border-radius: 0 var(--radius) var(--radius) 0;
+      font-size: 12px;
+    }
+    .finding.critical { border-color: var(--danger); background: rgba(239,68,68,.07); }
+    .finding.warn     { border-color: var(--warn);   background: rgba(245,158,11,.07); }
+    .finding.ok       { border-color: var(--accent2); background: rgba(0,212,170,.07); }
+    .finding .rule    { font-weight: 600; margin-bottom: 2px; }
+    .finding .step    { color: var(--muted); font-size: 11px; }
+
+    /* ── Compare table ── */
+    table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    th, td {
+      padding: 8px 12px;
+      text-align: right;
+      border-bottom: 1px solid var(--border);
+    }
+    th { color: var(--muted); font-weight: 600; text-align: right; }
+    th:first-child, td:first-child { text-align: left; }
+    tr:last-child td { border-bottom: none; }
+    .saved { color: var(--accent2); font-weight: 600; }
+
+    /* ── Chat ── */
+    .chat-container {
+      display: flex;
+      flex-direction: column;
+      height: calc(100vh - 200px);
+      min-height: 400px;
+    }
+    #chat-messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: 12px;
+    }
+    .msg { margin-bottom: 16px; }
+    .msg .role {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--muted);
+      margin-bottom: 4px;
+      text-transform: uppercase;
+      letter-spacing: .05em;
+    }
+    .msg.user .role  { color: var(--accent); }
+    .msg.assistant .role { color: var(--accent2); }
+    .msg .body {
+      background: var(--code-bg);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+      font-size: 13px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+    }
+    .msg.user .body { background: rgba(108,99,255,.12); }
+    .chat-input-row {
+      display: flex;
+      gap: 8px;
+    }
+    .chat-input-row textarea {
+      flex: 1;
+      min-height: 60px;
+    }
+    .chat-input-row button { align-self: flex-end; }
+    .usage-row {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 6px;
+    }
+
+    /* ── Spinner ── */
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .spinner {
+      display: inline-block;
+      width: 14px; height: 14px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .6s linear infinite;
+      vertical-align: middle;
+      margin-right: 6px;
+    }
+
+    /* ── Empty state ── */
+    .empty {
+      text-align: center;
+      color: var(--muted);
+      padding: 40px;
+      font-size: 13px;
+    }
+
+    /* ── Scenario cards (build tab) ── */
+    .scenario-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+      gap: 10px;
+      margin-bottom: 20px;
+    }
+    .scenario-card {
+      background: var(--surface);
+      border: 2px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px;
+      cursor: pointer;
+      transition: border-color .15s;
+    }
+    .scenario-card:hover   { border-color: var(--muted); }
+    .scenario-card.selected{ border-color: var(--accent); }
+    .scenario-card .s-icon { font-size: 24px; margin-bottom: 6px; }
+    .scenario-card .s-name { font-weight: 600; font-size: 13px; margin-bottom: 3px; }
+    .scenario-card .s-desc { font-size: 11px; color: var(--muted); line-height: 1.4; }
+
+    /* ── Progress bar ── */
+    .progress-bar {
+      height: 6px;
+      background: var(--border);
+      border-radius: 3px;
+      overflow: hidden;
+      margin-top: 4px;
+    }
+    .progress-fill {
+      height: 100%;
+      background: var(--accent);
+      border-radius: 3px;
+      transition: width .3s;
+    }
+    .progress-fill.cached { background: var(--accent2); }
+
+    /* scrollbar */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ── Prompt view toggle ── */
+    .prompt-toggle {
+      display: inline-flex;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      margin-bottom: 12px;
+    }
+    .prompt-toggle button {
+      background: transparent;
+      border: none;
+      color: var(--muted);
+      font-size: 12px;
+      padding: 6px 14px;
+      cursor: pointer;
+      transition: background .15s, color .15s;
+    }
+    .prompt-toggle button.active {
+      background: var(--accent);
+      color: #fff;
+    }
+    .prompt-view { display: none; }
+    .prompt-view.active { display: block; }
+
+    /* ── Side-by-side diff view ── */
+    .prompt-split {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .prompt-split .pane-label {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      margin-bottom: 8px;
+    }
+    .pane-label.raw  { color: var(--warn); }
+    .pane-label.ics  { color: var(--accent2); }
+    @media (max-width: 720px) {
+      .prompt-split { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <div style="font-size:20px">⚡</div>
+  <h1>ICS Demo</h1>
+  <span class="badge">v1.0</span>
+  <div id="api-status">
+    <span class="dot" id="api-dot"></span>
+    <span id="api-text">checking…</span>
+  </div>
+</header>
+
+<div class="container">
+  <nav>
+    <button class="active" onclick="showTab('build', this)">
+      <span class="icon">🏗️</span> Build
+    </button>
+    <button onclick="showTab('classify', this)">
+      <span class="icon">🔍</span> Classify
+    </button>
+    <button onclick="showTab('validate', this)">
+      <span class="icon">✅</span> Validate
+    </button>
+    <button onclick="showTab('compare', this)">
+      <span class="icon">📊</span> Compare
+    </button>
+    <button onclick="showTab('chat', this)">
+      <span class="icon">💬</span> Chat
+    </button>
+    <button onclick="showTab('console', this)" id="nav-console">
+      <span class="icon">🖥️</span> Console
+      <span id="console-badge" style="display:none;margin-left:4px;background:var(--danger);
+        color:#fff;font-size:10px;padding:1px 5px;border-radius:8px;">!</span>
+    </button>
+  </nav>
+
+  <main>
+
+    <!-- ══════════════ BUILD ══════════════ -->
+    <div id="tab-build" class="tab-panel active">
+      <h2>Build ICS Prompt</h2>
+      <p class="subtitle">Select a scenario to see its structured ICS blocks and compiled prompt.</p>
+
+      <div class="scenario-grid" id="scenario-grid">
+        <div class="empty">Loading scenarios…</div>
+      </div>
+
+      <button class="btn" id="build-btn" onclick="runBuild()" disabled>
+        Build Prompt
+      </button>
+
+      <div id="build-result" style="margin-top:20px;"></div>
+    </div>
+
+    <!-- ══════════════ CLASSIFY ══════════════ -->
+    <div id="tab-classify" class="tab-panel">
+      <h2>Auto-Classify Prompt</h2>
+      <p class="subtitle">Paste any unstructured system prompt — ICSAutoClassifier will detect its layers.</p>
+
+      <div style="margin-bottom:10px;">
+        <label>Sample prompts</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;" id="classify-samples">
+          <div class="empty">Loading…</div>
+        </div>
+      </div>
+
+      <div style="margin-bottom:12px;">
+        <label>Prompt text</label>
+        <textarea id="classify-input" rows="10" placeholder="Paste a system prompt here…"></textarea>
+      </div>
+
+      <button class="btn" onclick="runClassify()">Classify</button>
+
+      <div id="classify-result" style="margin-top:20px;"></div>
+    </div>
+
+    <!-- ══════════════ VALIDATE ══════════════ -->
+    <div id="tab-validate" class="tab-panel">
+      <h2>Validate ICS Prompt</h2>
+      <p class="subtitle">Check a structured ICS prompt against spec rules.</p>
+
+      <div style="margin-bottom:10px;">
+        <label>Example files</label>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;" id="validate-samples">
+          <div class="empty">Loading…</div>
+        </div>
+      </div>
+
+      <div style="margin-bottom:12px;">
+        <label>ICS prompt text</label>
+        <textarea id="validate-input" rows="10" placeholder="Paste a structured ICS prompt here…"></textarea>
+      </div>
+
+      <button class="btn" onclick="runValidate()">Validate</button>
+
+      <div id="validate-result" style="margin-top:20px;"></div>
+    </div>
+
+    <!-- ══════════════ COMPARE ══════════════ -->
+    <div id="tab-compare" class="tab-panel">
+      <h2>Token Savings Comparison</h2>
+      <p class="subtitle">See how ICS prompt caching reduces token usage over multiple API calls.</p>
+
+      <!-- Static explainer — always visible -->
+      <div class="card" style="margin-bottom:20px;border-color:var(--accent);background:rgba(108,99,255,.06);">
+        <div class="card-title" style="margin-bottom:12px;">How ICS prompt caching works</div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px;">
+          <!-- Naive side -->
+          <div>
+            <div style="font-size:11px;font-weight:700;color:var(--danger);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">
+              Without ICS — Naive
+            </div>
+            <div style="display:flex;flex-direction:column;gap:4px;" id="explainer-naive">
+              <!-- filled by JS after scenario loads -->
+              <div style="font-size:11px;color:var(--muted);">Select a scenario and click Compare</div>
+            </div>
+            <div style="margin-top:8px;font-size:11px;color:var(--muted);">
+              Every call sends <strong style="color:var(--text);">all</strong> tokens again.
+            </div>
+          </div>
+          <!-- ICS side -->
+          <div>
+            <div style="font-size:11px;font-weight:700;color:var(--accent2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px;">
+              With ICS — Cached
+            </div>
+            <div style="display:flex;flex-direction:column;gap:4px;" id="explainer-ics">
+              <div style="font-size:11px;color:var(--muted);">Select a scenario and click Compare</div>
+            </div>
+            <div style="margin-top:8px;font-size:11px;color:var(--muted);">
+              Stable layers are <strong style="color:var(--accent2);">cached once</strong>. Only dynamic layers are resent.
+            </div>
+          </div>
+        </div>
+
+        <div style="background:var(--code-bg);border-radius:var(--radius);padding:12px;font-size:12px;line-height:1.8;border:1px solid var(--border);">
+          <strong>Formula:</strong><br>
+          Naive cost (N calls) &nbsp;=&nbsp; <span style="color:var(--danger);">N × total_tokens</span><br>
+          ICS cost &nbsp;&nbsp; (N calls) &nbsp;=&nbsp; <span style="color:var(--accent2);">total_tokens</span> + <span style="color:var(--warn);">(N − 1) × dynamic_tokens</span><br>
+          <span style="color:var(--muted);">
+            &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
+            ↑ full first call &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; ↑ only dynamic on repeat calls
+          </span>
+        </div>
+      </div>
+
+      <div class="row" style="margin-bottom:8px;">
+        <div>
+          <label>Scenario</label>
+          <select id="compare-scenario"></select>
+        </div>
+        <button class="btn" onclick="runCompare()" style="flex:0;">Estimate</button>
+      </div>
+
+      <!-- Real benchmark row -->
+      <div class="card" style="margin-bottom:20px;border-color:var(--accent2);background:rgba(0,212,170,.04);">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;">
+          <div style="flex:1;min-width:0;">
+            <div style="font-weight:700;font-size:13px;margin-bottom:3px;">⚡ Run Real Benchmark</div>
+            <div style="font-size:12px;color:var(--muted);" id="bench-desc">
+              Makes actual API calls and returns ground-truth token counts + real cost data.
+              Uses <code>max_tokens=1</code> — cost is negligible (~$0.0001 per run).
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:10px;flex-shrink:0;flex-wrap:wrap;">
+            <div>
+              <label style="margin-bottom:4px;">Provider</label>
+              <select id="bench-provider" style="width:115px;" onchange="onProviderChange()">
+                <option value="anthropic">🟣 Anthropic</option>
+                <option value="openai">🟢 OpenAI</option>
+              </select>
+            </div>
+            <div>
+              <label style="margin-bottom:4px;">Calls</label>
+              <select id="bench-n-calls" style="width:70px;">
+                <option value="2">2</option>
+                <option value="3" selected>3</option>
+                <option value="4">4</option>
+                <option value="5">5</option>
+              </select>
+            </div>
+            <button class="btn" id="bench-btn" onclick="runBenchmark()"
+              style="background:var(--accent2);color:#000;margin-top:18px;">
+              Run Test
+            </button>
+          </div>
+        </div>
+        <div id="bench-no-key" style="display:none;margin-top:10px;font-size:12px;color:var(--warn);">
+          ⚠️ No API key set — restart the server with the relevant key to enable this.
+        </div>
+      </div>
+
+      <div id="bench-result" style="margin-bottom:24px;"></div>
+      <div id="compare-result"></div>
+    </div>
+
+    <!-- ══════════════ CHAT ══════════════ -->
+    <div id="tab-chat" class="tab-panel">
+      <h2>Live Chat</h2>
+      <p class="subtitle">Chat with the Orion DevAssist using ICS-structured prompts and prompt caching.</p>
+
+      <!-- Provider + key status bar -->
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap;">
+        <div>
+          <label style="margin-bottom:4px;">Provider</label>
+          <select id="chat-provider" style="width:130px;" onchange="onChatProviderChange()">
+            <option value="anthropic">🟣 Anthropic</option>
+            <option value="openai">🟢 OpenAI</option>
+          </select>
+        </div>
+        <div id="chat-no-key" class="card" style="display:none;border-color:var(--warn);padding:8px 12px;flex:1;">
+          <strong id="chat-no-key-msg">⚠️ API key not set</strong>
+          <span style="color:var(--muted);margin-left:8px;font-size:12px;" id="chat-no-key-hint">
+            Restart with the key set to enable chat.
+          </span>
+        </div>
+        <div id="chat-model-badge" style="font-size:11px;color:var(--muted);margin-left:auto;">
+          Model: <code id="chat-model-name">claude-opus-4-6</code>
+        </div>
+      </div>
+
+      <div class="chat-container">
+        <div id="chat-messages">
+          <div class="empty">Send a message to start the conversation.</div>
+        </div>
+
+        <div class="chat-input-row">
+          <textarea id="chat-input" placeholder="Ask a question about the Orion B2B Payments Platform…"
+            onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendChat();}"></textarea>
+          <button class="btn" id="chat-send" onclick="sendChat()">Send</button>
+        </div>
+        <div style="font-size:11px;color:var(--muted);margin-top:6px;">
+          Shift+Enter for newline · Enter to send
+        </div>
+      </div>
+    </div>
+
+    <!-- ══════════════ CONSOLE ══════════════ -->
+    <div id="tab-console" class="tab-panel">
+      <h2>Server Console</h2>
+      <p class="subtitle">Live server logs streamed from the backend — useful for debugging benchmark and API calls.</p>
+
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap;">
+        <button class="btn secondary" onclick="clearConsole()">Clear</button>
+        <button class="btn secondary" onclick="copyConsole()">Copy all</button>
+        <div style="display:flex;align-items:center;gap:6px;margin-left:auto;font-size:12px;">
+          <span class="dot" id="console-dot" style="background:var(--muted);"></span>
+          <span id="console-status">disconnected</span>
+        </div>
+        <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:12px;cursor:pointer;">
+          <input type="checkbox" id="console-autoscroll" checked> Auto-scroll
+        </label>
+        <label style="display:flex;align-items:center;gap:6px;margin:0;font-size:12px;cursor:pointer;">
+          Filter:
+          <select id="console-filter" style="width:90px;padding:4px 6px;font-size:12px;">
+            <option value="ALL">ALL</option>
+            <option value="INFO">INFO</option>
+            <option value="WARN">WARN</option>
+            <option value="ERROR">ERROR</option>
+            <option value="DEBUG">DEBUG</option>
+          </select>
+        </label>
+      </div>
+
+      <div id="console-output" style="
+        background:var(--code-bg);
+        border:1px solid var(--border);
+        border-radius:var(--radius);
+        padding:10px 12px;
+        height:calc(100vh - 260px);
+        min-height:300px;
+        overflow-y:auto;
+        font-family:'JetBrains Mono','Fira Code',monospace;
+        font-size:12px;
+        line-height:1.7;
+      "></div>
+    </div>
+
+  </main>
+</div>
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let samples = null;
+let selectedScenario = null;
+let chatHistory = [];  // {role, content}
+let chatTopics    = ['ACH rail implementation'];
+let chatDecisions = ['add retry logic to NACHA file generator'];
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+(async () => {
+  await Promise.all([checkStatus(), loadSamples()]);
+})();
+
+let _status = {};  // cached /api/status response
+
+async function checkStatus() {
+  try {
+    const r = await fetch('/api/status');
+    _status = await r.json();
+    const dot  = document.getElementById('api-dot');
+    const text = document.getElementById('api-text');
+    const anyKey = _status.api_key_set || _status.openai_key_set;
+    if (anyKey) {
+      dot.className    = 'dot ok';
+      text.textContent = _status.api_key_set && _status.openai_key_set
+        ? 'Anthropic + OpenAI keys set'
+        : _status.api_key_set ? 'Anthropic key set' : 'OpenAI key set';
+    } else {
+      dot.className    = 'dot bad';
+      text.textContent = 'No API key';
+    }
+    onProviderChange();
+    onChatProviderChange();
+  } catch { /* ignore */ }
+}
+
+function onProviderChange() {
+  const provider = document.getElementById('bench-provider').value;
+  const noKeyEl  = document.getElementById('bench-no-key');
+  const benchBtn = document.getElementById('bench-btn');
+
+  if (provider === 'openai') {
+    const installed = _status.openai_installed;   // false when v0.x or missing
+    const hasKey    = _status.openai_key_set;
+    const version   = _status.openai_version;
+    if (installed === false && version) {
+      // Package exists but is old v0.x
+      noKeyEl.innerHTML = `⚠️ openai SDK is outdated (v${version} detected). Run: <code>pip install --upgrade "openai>=1.0"</code>`;
+      noKeyEl.style.display = 'block';
+      benchBtn.disabled = true;
+    } else {
+      noKeyEl.innerHTML = '⚠️ No OPENAI_API_KEY — restart with the key set to enable this.';
+      noKeyEl.style.display = hasKey ? 'none' : 'block';
+      benchBtn.disabled = !hasKey;
+    }
+    document.getElementById('bench-desc').innerHTML =
+      'Makes actual OpenAI API calls. Uses <code>gpt-4o-mini</code> with <code>max_tokens=1</code>. Caching is automatic — no markup needed. Cost ~$0.000015 per run.';
+  } else {
+    const hasKey = _status.api_key_set;
+    noKeyEl.innerHTML = '⚠️ No ANTHROPIC_API_KEY — restart with the key set to enable this.';
+    noKeyEl.style.display = hasKey ? 'none' : 'block';
+    benchBtn.disabled = !hasKey;
+    document.getElementById('bench-desc').innerHTML =
+      'Makes actual Anthropic API calls. Uses <code>claude-haiku-4-5-20251001</code> with <code>max_tokens=1</code>. Cost ~$0.0001 per run.';
+  }
+}
+
+function onChatProviderChange() {
+  const provider = document.getElementById('chat-provider').value;
+  const hasKey = provider === 'openai' ? _status.openai_key_set : _status.api_key_set;
+  const noKeyEl  = document.getElementById('chat-no-key');
+  const sendBtn  = document.getElementById('chat-send');
+  const modelName = document.getElementById('chat-model-name');
+  noKeyEl.style.display = hasKey ? 'none' : 'flex';
+  sendBtn.disabled = !hasKey;
+  if (provider === 'openai') {
+    modelName.textContent = 'gpt-4o-mini';
+    document.getElementById('chat-no-key-msg').textContent = '⚠️ OPENAI_API_KEY not set';
+    document.getElementById('chat-no-key-hint').textContent = 'Restart with OPENAI_API_KEY=sk-… python web_app/app.py';
+  } else {
+    modelName.textContent = 'claude-opus-4-6';
+    document.getElementById('chat-no-key-msg').textContent = '⚠️ ANTHROPIC_API_KEY not set';
+    document.getElementById('chat-no-key-hint').textContent = 'Restart with ANTHROPIC_API_KEY=sk-ant-… python web_app/app.py';
+  }
+}
+
+async function loadSamples() {
+  let r;
+  try {
+    r = await fetch('/api/samples');
+    if (!r.ok) throw new Error(`Server returned ${r.status}`);
+    samples = await r.json();
+  } catch (e) {
+    document.getElementById('scenario-grid').innerHTML =
+      `<div class="finding critical"><div class="rule">Failed to load scenarios</div><div>${e.message}</div></div>`;
+    return;
+  }
+
+  // Build tab — scenario cards
+  const grid = document.getElementById('scenario-grid');
+  grid.innerHTML = '';
+  for (const s of samples.build_scenarios) {
+    const card = document.createElement('div');
+    card.className = 'scenario-card';
+    card.dataset.id = s.id;
+    card.innerHTML = `<div class="s-icon">${s.icon}</div>
+      <div class="s-name">${s.name}</div>
+      <div class="s-desc">${s.description}</div>`;
+    card.addEventListener('click', () => selectScenario(s.id));
+    grid.appendChild(card);
+  }
+
+  // Classify tab — sample buttons
+  const cSamples = document.getElementById('classify-samples');
+  cSamples.innerHTML = '';
+  for (const s of samples.classify_samples) {
+    const btn = document.createElement('button');
+    btn.className = 'btn secondary';
+    btn.style.fontSize = '12px';
+    btn.textContent = s.name;
+    btn.onclick = () => { document.getElementById('classify-input').value = s.text; };
+    cSamples.appendChild(btn);
+  }
+
+  // Validate tab — sample buttons
+  const vSamples = document.getElementById('validate-samples');
+  vSamples.innerHTML = '';
+  for (const s of samples.validate_samples) {
+    const btn = document.createElement('button');
+    btn.className = 'btn secondary';
+    btn.style.fontSize = '12px';
+    btn.textContent = s.name;
+    btn.onclick = () => { document.getElementById('validate-input').value = s.text; };
+    vSamples.appendChild(btn);
+  }
+
+  // Compare tab — scenario select
+  const sel = document.getElementById('compare-scenario');
+  sel.innerHTML = samples.build_scenarios
+    .map(s => `<option value="${s.id}">${s.icon} ${s.name}</option>`)
+    .join('');
+}
+
+// ── Tab navigation ─────────────────────────────────────────────────────────
+function showTab(name, btn) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('nav button').forEach(b => b.classList.remove('active'));
+  document.getElementById('tab-' + name).classList.add('active');
+  btn.classList.add('active');
+  if (name === 'console') {
+    document.getElementById('console-badge').style.display = 'none';
+  }
+}
+
+// ── BUILD ───────────────────────────────────────────────────────────────────
+function selectScenario(id) {
+  selectedScenario = id;
+  document.querySelectorAll('.scenario-card').forEach(c => {
+    c.classList.toggle('selected', c.dataset.id === id);
+  });
+  document.getElementById('build-btn').disabled = false;
+}
+
+async function runBuild() {
+  if (!selectedScenario) return;
+  const btn = document.getElementById('build-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Building…';
+  const el = document.getElementById('build-result');
+  el.innerHTML = '';
+  try {
+    const r = await fetch('/api/build', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({scenario_id: selectedScenario}),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Build failed');
+    el.innerHTML = renderBuildResult(d);
+  } catch (e) {
+    el.innerHTML = `<div class="finding critical"><div class="rule">Error</div><div>${e.message}</div></div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Build Prompt';
+  }
+}
+
+function renderBuildResult(d) {
+  const uid = 'bv' + Date.now();   // unique id so multiple builds don't collide
+
+  const stats = `
+    <div class="stats">
+      <div class="stat"><div class="stat-value">${d.blocks.length}</div><div class="stat-label">Blocks</div></div>
+      <div class="stat"><div class="stat-value">${d.total_tokens.toLocaleString()}</div><div class="stat-label">Total tokens</div></div>
+      <div class="stat"><div class="stat-value">${d.cached_tokens.toLocaleString()}</div><div class="stat-label">Cache-eligible</div></div>
+      <div class="stat"><div class="stat-value">${d.cache_pct}%</div><div class="stat-label">Cache ratio</div></div>
+    </div>`;
+
+  const blocks = d.blocks.map(b => `
+    <div class="card">
+      <div class="card-header">
+        <span class="chip ${b.layer}">${b.layer}</span>
+        <span style="font-size:11px;color:var(--muted);">
+          ${b.tokens} tokens
+          ${b.cache_eligible ? '· <span style="color:var(--accent2);">⚡ cache</span>' : ''}
+        </span>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill ${b.cache_eligible ? 'cached' : ''}"
+             style="width:${Math.min(100, b.tokens/2)}%"></div>
+      </div>
+      <pre style="margin-top:10px;">${escHtml(b.content)}</pre>
+    </div>`).join('');
+
+  // ── Raw vs ICS prompt viewer ──────────────────────────────────────────────
+  const rawTokens = d.total_tokens;   // same content, different structure
+  const promptViewer = `
+    <div class="card" style="margin-top:8px;">
+      <div class="card-header" style="margin-bottom:10px;">
+        <span class="card-title">Prompt viewer</span>
+        <div style="display:flex;gap:8px;align-items:center;">
+          <div class="prompt-toggle" id="${uid}-toggle">
+            <button class="active" onclick="switchPromptView('${uid}','split')">Side-by-side</button>
+            <button onclick="switchPromptView('${uid}','raw')">Raw (pre-ICS)</button>
+            <button onclick="switchPromptView('${uid}','ics')">ICS Compiled</button>
+          </div>
+          <button class="btn secondary" id="${uid}-copy-raw" style="font-size:11px;padding:4px 10px;display:none;"
+            onclick="copyText(${JSON.stringify(d.raw_prompt)})">Copy raw</button>
+          <button class="btn secondary" id="${uid}-copy-ics" style="font-size:11px;padding:4px 10px;"
+            onclick="copyText(${JSON.stringify(d.compiled)})">Copy ICS</button>
+        </div>
+      </div>
+
+      <!-- Side-by-side (default) -->
+      <div class="prompt-view active" id="${uid}-view-split">
+        <div class="prompt-split">
+          <div>
+            <div class="pane-label raw">⚠ Raw — pre-ICS (unstructured)</div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">
+              ${rawTokens.toLocaleString()} tokens · no caching metadata · no layer boundaries
+            </div>
+            <pre style="max-height:420px;overflow-y:auto;">${escHtml(d.raw_prompt)}</pre>
+          </div>
+          <div>
+            <div class="pane-label ics">⚡ ICS Compiled (structured)</div>
+            <div style="font-size:11px;color:var(--muted);margin-bottom:8px;">
+              ${rawTokens.toLocaleString()} tokens · ${d.cache_pct}% cache-eligible · explicit layer boundaries
+            </div>
+            <pre style="max-height:420px;overflow-y:auto;">${escHtml(d.compiled)}</pre>
+          </div>
+        </div>
+      </div>
+
+      <!-- Raw only -->
+      <div class="prompt-view" id="${uid}-view-raw">
+        <div class="pane-label raw" style="margin-bottom:8px;">⚠ Raw prompt — pre-ICS (unstructured flat text)</div>
+        <pre>${escHtml(d.raw_prompt)}</pre>
+      </div>
+
+      <!-- ICS only -->
+      <div class="prompt-view" id="${uid}-view-ics">
+        <div class="pane-label ics" style="margin-bottom:8px;">⚡ ICS Compiled — structured with layer boundaries</div>
+        <pre>${escHtml(d.compiled)}</pre>
+      </div>
+    </div>`;
+
+  return stats + blocks + promptViewer;
+}
+
+function switchPromptView(uid, mode) {
+  ['split','raw','ics'].forEach(m => {
+    document.getElementById(`${uid}-view-${m}`).classList.toggle('active', m === mode);
+  });
+  document.querySelectorAll(`#${uid}-toggle button`).forEach((btn, i) => {
+    btn.classList.toggle('active', ['split','raw','ics'][i] === mode);
+  });
+  // Show/hide copy buttons
+  const copyRaw = document.getElementById(`${uid}-copy-raw`);
+  const copyIcs = document.getElementById(`${uid}-copy-ics`);
+  if (copyRaw) copyRaw.style.display = mode === 'ics' ? 'none' : 'inline-block';
+  if (copyIcs) copyIcs.style.display = mode === 'raw' ? 'none' : 'inline-block';
+}
+
+// ── CLASSIFY ────────────────────────────────────────────────────────────────
+async function runClassify() {
+  const text = document.getElementById('classify-input').value.trim();
+  if (!text) return;
+  const el = document.getElementById('classify-result');
+  el.innerHTML = '<span class="spinner"></span> Classifying…';
+  try {
+    const r = await fetch('/api/classify', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({text}),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Classify failed');
+    el.innerHTML = renderClassifyResult(d);
+  } catch (e) {
+    el.innerHTML = `<div class="finding critical"><div class="rule">Error</div><div>${e.message}</div></div>`;
+  }
+}
+
+function renderClassifyResult(d) {
+  const layerChips = d.blocks.map(b =>
+    `<span class="chip ${b.layer}">${b.layer}</span>`).join(' ');
+
+  const warns = d.warnings.length
+    ? d.warnings.map(w => `<div class="finding warn"><div class="rule">${escHtml(w)}</div></div>`).join('')
+    : '<div class="finding ok"><div class="rule">No warnings</div></div>';
+
+  const blocks = d.blocks.map(b => `
+    <div class="card">
+      <div class="card-header">
+        <span class="chip ${b.layer}">${b.layer}</span>
+        <span style="font-size:11px;color:var(--muted);">
+          confidence: ${Math.round((b.confidence||0)*100)}%
+        </span>
+      </div>
+      <pre>${escHtml(b.content)}</pre>
+    </div>`).join('');
+
+  const icsOut = `
+    <div class="card">
+      <div class="card-header">
+        <span class="card-title">ICS Output</span>
+        <button class="btn secondary" style="font-size:11px;padding:4px 10px;"
+          onclick="copyText(${JSON.stringify(d.ics_output)})">Copy</button>
+      </div>
+      <pre>${escHtml(d.ics_output)}</pre>
+    </div>`;
+
+  return `
+    <div class="stats">
+      <div class="stat"><div class="stat-value">${d.blocks.length}</div><div class="stat-label">Detected blocks</div></div>
+      <div class="stat"><div class="stat-value">${d.warnings.length}</div><div class="stat-label">Warnings</div></div>
+    </div>
+    <div class="card" style="margin-bottom:12px;">
+      <div class="card-title" style="margin-bottom:8px;">Detected layers</div>
+      ${layerChips || '<span style="color:var(--muted)">None</span>'}
+    </div>
+    <div class="card" style="margin-bottom:12px;">
+      <div class="card-title" style="margin-bottom:8px;">Warnings</div>
+      ${warns}
+    </div>
+    ${blocks}
+    ${icsOut}`;
+}
+
+// ── VALIDATE ────────────────────────────────────────────────────────────────
+async function runValidate() {
+  const text = document.getElementById('validate-input').value.trim();
+  if (!text) return;
+  const el = document.getElementById('validate-result');
+  el.innerHTML = '<span class="spinner"></span> Validating…';
+  try {
+    const r = await fetch('/api/validate', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({text}),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Validate failed');
+    el.innerHTML = renderValidateResult(d);
+  } catch (e) {
+    el.innerHTML = `<div class="finding critical"><div class="rule">Error</div><div>${e.message}</div></div>`;
+  }
+}
+
+function renderValidateResult(d) {
+  const badge = d.compliant
+    ? '<span style="color:var(--accent2);font-size:18px;">✓ Compliant</span>'
+    : '<span style="color:var(--danger);font-size:18px;">✗ Non-compliant</span>';
+
+  const violations = d.violations.length
+    ? d.violations.map(v => `
+        <div class="finding critical">
+          <div class="rule">${escHtml(v.rule)}</div>
+          <div class="step">${escHtml(v.step)}</div>
+          <div style="margin-top:4px;">${escHtml(v.message)}</div>
+        </div>`).join('')
+    : '<div class="finding ok"><div class="rule">No violations</div></div>';
+
+  const warnings = d.warnings && d.warnings.length
+    ? d.warnings.map(w => `<div class="finding warn"><div class="rule">${escHtml(w)}</div></div>`).join('')
+    : '';
+
+  return `
+    <div class="card" style="margin-bottom:16px;">
+      <div class="card-header">
+        <div class="card-title">Result</div>
+        ${badge}
+      </div>
+      <div style="display:flex;gap:16px;margin-top:10px;">
+        <span style="color:var(--muted);font-size:12px;">${d.violations.length} violation(s)</span>
+        ${d.warnings ? `<span style="color:var(--muted);font-size:12px;">${d.warnings.length} warning(s)</span>` : ''}
+      </div>
+    </div>
+    <div class="card">
+      <div class="card-title" style="margin-bottom:10px;">Violations</div>
+      ${violations}
+    </div>
+    ${warnings ? `<div class="card" style="margin-top:12px;"><div class="card-title" style="margin-bottom:10px;">Warnings</div>${warnings}</div>` : ''}`;
+}
+
+// ── COMPARE ─────────────────────────────────────────────────────────────────
+async function runCompare() {
+  const scenario_id = document.getElementById('compare-scenario').value;
+  const el = document.getElementById('compare-result');
+  el.innerHTML = '<span class="spinner"></span> Calculating…';
+  try {
+    const r = await fetch('/api/compare', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({scenario_id}),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Compare failed');
+    el.innerHTML = renderCompareResult(d);
+  } catch (e) {
+    el.innerHTML = `<div class="finding critical"><div class="rule">Error</div><div>${e.message}</div></div>`;
+  }
+}
+
+function renderCompareResult(d) {
+  // ── Update explainer side-by-side blocks ──────────────────────────────────
+  const naiveEl = document.getElementById('explainer-naive');
+  const icsEl   = document.getElementById('explainer-ics');
+  naiveEl.innerHTML = d.layers.map(l => `
+    <div style="display:flex;align-items:center;justify-content:space-between;
+                background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.25);
+                border-radius:5px;padding:5px 10px;">
+      <span class="chip ${l.name}" style="font-size:10px;">${l.name}</span>
+      <span style="font-size:11px;color:var(--danger);">${l.tokens} tok ↑ sent</span>
+    </div>`).join('');
+  icsEl.innerHTML = d.layers.map(l => `
+    <div style="display:flex;align-items:center;justify-content:space-between;
+                background:${l.cache_eligible ? 'rgba(0,212,170,.08)' : 'rgba(245,158,11,.08)'};
+                border:1px solid ${l.cache_eligible ? 'rgba(0,212,170,.3)' : 'rgba(245,158,11,.3)'};
+                border-radius:5px;padding:5px 10px;">
+      <span class="chip ${l.name}" style="font-size:10px;">${l.name}</span>
+      ${l.cache_eligible
+        ? `<span style="font-size:11px;color:var(--accent2);">${l.tokens} tok ⚡ cached</span>`
+        : `<span style="font-size:11px;color:var(--warn);">${l.tokens} tok ↑ sent</span>`}
+    </div>`).join('');
+
+  // ── Top stats ─────────────────────────────────────────────────────────────
+  const cachedTokens  = d.ics_total - d.dynamic_tokens;
+  const cacheRatio    = d.ics_total ? Math.round(cachedTokens / d.ics_total * 100) : 0;
+  const stats = `
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-value">${d.naive_tokens.toLocaleString()}</div>
+        <div class="stat-label">Naive tokens / call</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" style="color:var(--accent2);">${cachedTokens.toLocaleString()}</div>
+        <div class="stat-label">Cached (stable)</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value" style="color:var(--warn);">${d.dynamic_tokens.toLocaleString()}</div>
+        <div class="stat-label">Dynamic (resent)</div>
+      </div>
+      <div class="stat">
+        <div class="stat-value">${cacheRatio}%</div>
+        <div class="stat-label">Cache ratio</div>
+      </div>
+    </div>`;
+
+  // ── Layer breakdown with bar visualisation ────────────────────────────────
+  const maxTok = Math.max(...d.layers.map(l => l.tokens));
+  const layers = `
+    <h3 style="font-size:13px;margin-bottom:10px;">Layer token breakdown</h3>
+    <div class="card" style="margin-bottom:20px;">
+      <table>
+        <thead>
+          <tr>
+            <th style="text-align:left;">Layer</th>
+            <th>Tokens</th>
+            <th>% of prompt</th>
+            <th style="text-align:left;width:40%;">Distribution</th>
+            <th>Caching</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${d.layers.map(l => {
+            const pct   = d.ics_total ? Math.round(l.tokens / d.ics_total * 100) : 0;
+            const barW  = maxTok ? Math.round(l.tokens / maxTok * 100) : 0;
+            const color = l.cache_eligible ? 'var(--accent2)' : 'var(--warn)';
+            return `<tr>
+              <td><span class="chip ${l.name}">${l.name}</span></td>
+              <td>${l.tokens.toLocaleString()}</td>
+              <td>${pct}%</td>
+              <td>
+                <div style="background:var(--border);border-radius:3px;height:8px;overflow:hidden;">
+                  <div style="width:${barW}%;height:100%;background:${color};border-radius:3px;"></div>
+                </div>
+              </td>
+              <td style="text-align:center;">
+                ${l.cache_eligible
+                  ? '<span style="color:var(--accent2);">⚡ cached</span>'
+                  : '<span style="color:var(--warn);">↑ resent</span>'}
+              </td>
+            </tr>`;
+          }).join('')}
+          <tr style="border-top:2px solid var(--border);">
+            <td><strong>Total</strong></td>
+            <td><strong>${d.ics_total.toLocaleString()}</strong></td>
+            <td>100%</td>
+            <td></td>
+            <td></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>`;
+
+  // ── Call-by-call simulation (first 5 calls) ───────────────────────────────
+  const simCalls = [1,2,3,4,5];
+  const simRows  = simCalls.map(n => {
+    const naiveTok = d.naive_tokens * n;
+    const icsTok   = d.ics_total + d.dynamic_tokens * (n - 1);
+    const saved    = Math.max(0, naiveTok - icsTok);
+    const pct      = naiveTok ? Math.round(saved / naiveTok * 100) : 0;
+    const barNaive = 100;
+    const barIcs   = Math.round(icsTok / naiveTok * 100);
+    return `
+      <tr>
+        <td style="font-weight:600;">Call ${n}</td>
+        <td>
+          <div style="background:var(--border);border-radius:3px;height:8px;margin-bottom:3px;overflow:hidden;">
+            <div style="width:${barNaive}%;height:100%;background:var(--danger);border-radius:3px;opacity:.7;"></div>
+          </div>
+          <span style="font-size:11px;color:var(--muted);">${naiveTok.toLocaleString()} tok</span>
+        </td>
+        <td>
+          <div style="background:var(--border);border-radius:3px;height:8px;margin-bottom:3px;overflow:hidden;">
+            <div style="width:${barIcs}%;height:100%;background:var(--accent2);border-radius:3px;opacity:.9;"></div>
+          </div>
+          <span style="font-size:11px;color:var(--muted);">${icsTok.toLocaleString()} tok</span>
+        </td>
+        <td class="saved">-${saved.toLocaleString()}</td>
+        <td class="saved">${pct}%</td>
+        <td style="font-size:11px;color:var(--muted);">
+          ${n === 1
+            ? 'First call — all layers sent, cache seeded'
+            : `Cached layers skipped — only ${d.dynamic_tokens.toLocaleString()} dynamic tokens sent`}
+        </td>
+      </tr>`;
+  }).join('');
+
+  const simulation = `
+    <h3 style="font-size:13px;margin-bottom:6px;">Call-by-call simulation</h3>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+      The first call pays the full cost to seed the cache. Every subsequent call only sends the dynamic layers.
+    </p>
+    <div class="card" style="margin-bottom:20px;overflow-x:auto;">
+      <table>
+        <thead>
+          <tr>
+            <th style="text-align:left;">Call #</th>
+            <th style="text-align:left;">Naive tokens</th>
+            <th style="text-align:left;">ICS tokens</th>
+            <th>Saved</th>
+            <th>Saving %</th>
+            <th style="text-align:left;">What happens</th>
+          </tr>
+        </thead>
+        <tbody>${simRows}</tbody>
+      </table>
+    </div>`;
+
+  // ── Cumulative savings table with inline bar ──────────────────────────────
+  const maxSaved = Math.max(...d.savings.map(s => s.saved));
+  const rows = d.savings.map(s => {
+    const barW = maxSaved ? Math.round(s.saved / maxSaved * 100) : 0;
+    return `
+      <tr>
+        <td>${s.calls} calls</td>
+        <td style="color:var(--danger);">${s.naive.toLocaleString()}</td>
+        <td style="color:var(--accent2);">${s.ics.toLocaleString()}</td>
+        <td>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div style="flex:1;background:var(--border);border-radius:3px;height:8px;overflow:hidden;min-width:60px;">
+              <div style="width:${barW}%;height:100%;background:var(--accent);border-radius:3px;"></div>
+            </div>
+            <span class="saved" style="white-space:nowrap;">-${s.saved.toLocaleString()} (${s.pct}%)</span>
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+
+  const cumulative = `
+    <h3 style="font-size:13px;margin-bottom:6px;">Cumulative savings at scale</h3>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+      Savings compound with every call — the higher the call volume, the bigger the advantage.
+    </p>
+    <div class="card">
+      <table>
+        <thead>
+          <tr>
+            <th style="text-align:left;">Scale</th>
+            <th style="color:var(--danger);">Naive total</th>
+            <th style="color:var(--accent2);">ICS total</th>
+            <th style="text-align:left;">Tokens saved</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>`;
+
+  return stats + layers + simulation + cumulative;
+}
+
+// ── BENCHMARK ───────────────────────────────────────────────────────────────
+async function runBenchmark() {
+  const scenario_id = document.getElementById('compare-scenario').value;
+  const n_calls     = parseInt(document.getElementById('bench-n-calls').value);
+  const provider    = document.getElementById('bench-provider').value;
+  const el          = document.getElementById('bench-result');
+  const btn         = document.getElementById('bench-btn');
+
+  const providerLabel = provider === 'openai' ? 'OpenAI' : 'Anthropic';
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span>Running…';
+  el.innerHTML = `
+    <div class="card" style="color:var(--muted);font-size:13px;">
+      <span class="spinner"></span>
+      Making ${n_calls} real API calls to ${providerLabel}… this takes ~${n_calls * 2}–${n_calls * 5}s
+    </div>`;
+
+  try {
+    const r = await fetch('/api/benchmark', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({scenario_id, n_calls, provider}),
+    });
+    const d = await r.json();
+    if (!r.ok) throw new Error(d.detail || 'Benchmark failed');
+    el.innerHTML = renderBenchmarkResult(d, provider);
+  } catch (e) {
+    el.innerHTML = `<div class="finding critical"><div class="rule">Error</div><div>${e.message}</div></div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Run Test';
+  }
+}
+
+function renderBenchmarkResult(d, provider = 'anthropic') {
+  const providerLabel = provider === 'openai' ? 'OpenAI (gpt-4o-mini)' : 'Anthropic (claude-haiku-4-5)';
+  const s = d.summary;
+
+  // ── Cache warning banner ─────────────────────────────────────────────────
+  const warnBanner = s && s.cache_warning ? `
+    <div style="border:1px solid var(--warn);border-radius:var(--radius);padding:14px 16px;
+                background:rgba(245,158,11,.08);margin-bottom:16px;">
+      <div style="font-weight:700;color:var(--warn);margin-bottom:6px;">
+        ⚠️ Caching not triggered — prompt too small
+      </div>
+      <div style="font-size:12px;line-height:1.7;">
+        ${escHtml(s.cache_warning)}
+      </div>
+      <div style="margin-top:10px;font-size:12px;">
+        <strong>Why?</strong> Anthropic requires a minimum of
+        <strong>${s.cache_threshold} tokens</strong> in the stable cache prefix.
+        This scenario's stable layers are <strong>~${s.cacheable_est_tokens} tokens</strong>
+        ${s.cacheable_est_tokens < s.cache_threshold ? '— below the threshold' : '— but block ordering put each checkpoint below the minimum individually'}.<br>
+        <strong>Fix:</strong> Restart the server to pick up the block-ordering fix,
+        then select <strong>🏦 Orion DevAssist (Full — benchmark)</strong> and run again.
+      </div>
+    </div>` : '';
+
+  // ── Per-call table ────────────────────────────────────────────────────────
+  const callRows = d.per_call.map(c => {
+    if (c.error) return `
+      <tr>
+        <td>Call ${c.call}</td>
+        <td colspan="5" style="color:var(--danger);">${escHtml(c.error)}</td>
+      </tr>`;
+    return `
+      <tr>
+        <td>Call ${c.call}</td>
+        <td>${c.input_tokens.toLocaleString()}</td>
+        <td style="color:var(--accent2);">
+          ${c.cache_creation > 0
+            ? `+${c.cache_creation.toLocaleString()} <span style="font-size:10px;">(written)</span>`
+            : '—'}
+        </td>
+        <td style="color:var(--accent2);">
+          ${c.cache_read > 0
+            ? `${c.cache_read.toLocaleString()} <span style="font-size:10px;">(hit ✓)</span>`
+            : '—'}
+        </td>
+        <td>${c.total_billed.toLocaleString()}</td>
+        <td>
+          ${c.cache_hit
+            ? '<span style="color:var(--accent2);">⚡ Cache hit</span>'
+            : c.cache_creation > 0
+              ? '<span style="color:var(--warn);">🌱 Cache seeded</span>'
+              : '<span style="color:var(--muted);">—</span>'}
+        </td>
+      </tr>`;
+  }).join('');
+
+  const perCallSection = `
+    <h3 style="font-size:13px;margin-bottom:8px;">Real API calls — per-call usage <span style="font-weight:400;color:var(--muted);font-size:11px;">via ${escHtml(providerLabel)}</span></h3>
+    <div class="card" style="margin-bottom:16px;overflow-x:auto;">
+      <table>
+        <thead>
+          <tr>
+            <th style="text-align:left;">Call</th>
+            <th>Input tokens</th>
+            <th style="color:var(--accent2);">${provider === 'openai' ? 'Cache (auto)' : 'Cache write'}</th>
+            <th style="color:var(--accent2);">Cache read</th>
+            <th>Total billed</th>
+            <th style="text-align:left;">Status</th>
+          </tr>
+        </thead>
+        <tbody>${callRows}</tbody>
+      </table>
+    </div>`;
+
+  if (!s || !s.real_total_tokens) return warnBanner + `
+    <div class="card" style="border-color:var(--accent2);">
+      <div class="card-title" style="margin-bottom:8px;">Real Benchmark Results</div>
+      ${perCallSection}
+    </div>`;
+
+  // ── Estimate accuracy ────────────────────────────────────────────────────
+  const errPct = s.estimate_error_pct;
+  const errColor = errPct < 10 ? 'var(--accent2)' : errPct < 25 ? 'var(--warn)' : 'var(--danger)';
+  const accuracySection = `
+    <h3 style="font-size:13px;margin-bottom:8px;">Estimate vs reality</h3>
+    <div class="card" style="margin-bottom:16px;">
+      <table>
+        <thead>
+          <tr>
+            <th style="text-align:left;">Metric</th>
+            <th>Estimated (len/4)</th>
+            <th>Real (API)</th>
+            <th>Error</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Total tokens / call</td>
+            <td style="color:var(--muted);">${s.est_total_tokens.toLocaleString()}</td>
+            <td style="font-weight:700;">${s.real_total_tokens.toLocaleString()}</td>
+            <td style="color:${errColor};">${errPct}%</td>
+          </tr>
+          <tr>
+            <td>Dynamic (resent each call)</td>
+            <td style="color:var(--muted);">${s.est_dynamic_tokens.toLocaleString()}</td>
+            <td style="font-weight:700;">${s.real_dynamic_tokens.toLocaleString()}</td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <td>Cached (stable layers)</td>
+            <td style="color:var(--muted);">—</td>
+            <td style="font-weight:700;color:var(--accent2);">${s.real_cached_tokens.toLocaleString()}</td>
+            <td>—</td>
+          </tr>
+        </tbody>
+      </table>
+      <div style="margin-top:10px;font-size:11px;color:var(--muted);">
+        ${errPct < 10
+          ? '✓ Estimate is accurate (within 10%)'
+          : errPct < 25
+            ? '⚠️ Estimate is off — content has unusual tokenisation density'
+            : '✗ Estimate is significantly off — use real benchmark counts for precise projections'}
+      </div>
+    </div>`;
+
+  // ── Real cost projections ────────────────────────────────────────────────
+  const maxCost = Math.max(...s.cost_savings.map(c => c.naive_cost));
+  const costRows = s.cost_savings.map(c => {
+    const barNaive = 100;
+    const barIcs   = maxCost ? Math.round(c.ics_cost / c.naive_cost * 100) : 0;
+    return `
+      <tr>
+        <td>${c.calls} calls</td>
+        <td style="color:var(--danger);">$${c.naive_cost < 0.001 ? c.naive_cost.toFixed(6) : c.naive_cost.toFixed(4)}</td>
+        <td style="color:var(--accent2);">$${c.ics_cost < 0.001   ? c.ics_cost.toFixed(6)   : c.ics_cost.toFixed(4)}</td>
+        <td>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div style="flex:1;min-width:80px;background:var(--border);border-radius:3px;height:8px;overflow:hidden;">
+              <div style="width:${100 - barIcs}%;height:100%;background:var(--accent);border-radius:3px;"></div>
+            </div>
+            <span class="saved" style="white-space:nowrap;">
+              $${c.saved_cost.toFixed(6)} (${c.pct}%)
+            </span>
+          </div>
+        </td>
+      </tr>`;
+  }).join('');
+
+  const costSection = `
+    <h3 style="font-size:13px;margin-bottom:6px;">Real cost projections</h3>
+    <p style="font-size:12px;color:var(--muted);margin-bottom:10px;">
+      Based on actual token counts from the benchmark.
+      Price model: <code style="font-size:11px;">${escHtml(s.price_model)}</code>
+    </p>
+    <div class="card">
+      <table>
+        <thead>
+          <tr>
+            <th style="text-align:left;">Scale</th>
+            <th style="color:var(--danger);">Naive cost</th>
+            <th style="color:var(--accent2);">ICS cost</th>
+            <th style="text-align:left;">$ saved</th>
+          </tr>
+        </thead>
+        <tbody>${costRows}</tbody>
+      </table>
+    </div>`;
+
+  return warnBanner + `
+    <div style="border:1px solid var(--accent2);border-radius:var(--radius);padding:16px;margin-bottom:4px;
+                background:rgba(0,212,170,.04);">
+      <div style="font-size:13px;font-weight:700;color:var(--accent2);margin-bottom:16px;">
+        ⚡ Real benchmark results — ground truth from Anthropic API
+      </div>
+      ${perCallSection}
+      ${accuracySection}
+      ${costSection}
+    </div>`;
+}
+
+// ── CHAT ────────────────────────────────────────────────────────────────────
+async function sendChat() {
+  const input = document.getElementById('chat-input');
+  const msg   = input.value.trim();
+  if (!msg) return;
+
+  input.value = '';
+  appendMsg('user', msg);
+
+  const sendBtn = document.getElementById('chat-send');
+  sendBtn.disabled = true;
+
+  const assistantEl = appendMsg('assistant', '');
+  const body = assistantEl.querySelector('.body');
+  body.innerHTML = '<span class="spinner"></span>';
+
+  let buffer = '';
+
+  try {
+    const provider = document.getElementById('chat-provider').value;
+    const params = new URLSearchParams({
+      message:   msg,
+      topics:    chatTopics.join(','),
+      decisions: chatDecisions.join(','),
+      provider,
+    });
+
+    const es = new EventSource(`/api/chat/stream?${params}`);
+
+    es.onmessage = (e) => {
+      const data = JSON.parse(e.data);
+      if (data.type === 'text') {
+        buffer += data.text;
+        body.textContent = buffer;
+        document.getElementById('chat-messages').scrollTop = 9999;
+      } else if (data.type === 'done') {
+        es.close();
+        sendBtn.disabled = false;
+        const u = data.usage;
+        const usage = document.createElement('div');
+        usage.className = 'usage-row';
+        usage.textContent =
+          `↑ ${u.input} in · ↓ ${u.output} out · 💾 ${u.cache_read} cache_read · ✏️ ${u.cache_write} cache_write`;
+        assistantEl.appendChild(usage);
+        // update session context
+        chatTopics.push(msg.substring(0, 60));
+      } else if (data.type === 'error') {
+        es.close();
+        body.textContent = '⚠️ ' + data.message;
+        sendBtn.disabled = false;
+      }
+    };
+    es.onerror = () => {
+      es.close();
+      if (!buffer) body.textContent = '⚠️ Connection error';
+      sendBtn.disabled = false;
+    };
+  } catch (e) {
+    body.textContent = '⚠️ ' + e.message;
+    sendBtn.disabled = false;
+  }
+}
+
+function appendMsg(role, content) {
+  const msgs = document.getElementById('chat-messages');
+  // clear empty state
+  const empty = msgs.querySelector('.empty');
+  if (empty) empty.remove();
+
+  const el = document.createElement('div');
+  el.className = `msg ${role}`;
+  el.innerHTML = `<div class="role">${role}</div><div class="body">${escHtml(content)}</div>`;
+  msgs.appendChild(el);
+  msgs.scrollTop = 9999;
+  return el;
+}
+
+// ── CONSOLE ─────────────────────────────────────────────────────────────────
+let consoleES = null;
+let consoleEntries = [];
+
+const LEVEL_COLOR = {
+  INFO:  '#a9b1d6',
+  WARN:  '#fbbf24',
+  ERROR: '#f87171',
+  DEBUG: '#64748b',
+  PING:  null,  // hidden
+};
+
+function startConsole() {
+  if (consoleES) return;
+  consoleES = new EventSource('/api/logs');
+  const dot    = document.getElementById('console-dot');
+  const status = document.getElementById('console-status');
+
+  consoleES.onopen = () => {
+    dot.style.background = 'var(--accent2)';
+    status.textContent   = 'connected';
+  };
+  consoleES.onmessage = (e) => {
+    const entry = JSON.parse(e.data);
+    if (entry.level === 'PING') return;
+    consoleEntries.push(entry);
+    renderConsoleLine(entry);
+    // badge on nav if not on console tab
+    if (!document.getElementById('tab-console').classList.contains('active')) {
+      if (entry.level === 'ERROR' || entry.level === 'WARN') {
+        document.getElementById('console-badge').style.display = 'inline';
+      }
+    }
+  };
+  consoleES.onerror = () => {
+    dot.style.background = 'var(--danger)';
+    status.textContent   = 'disconnected — retrying…';
+  };
+}
+
+function renderConsoleLine(entry) {
+  const filter = document.getElementById('console-filter').value;
+  if (filter !== 'ALL' && entry.level !== filter) return;
+
+  const color = LEVEL_COLOR[entry.level] || '#a9b1d6';
+  const out   = document.getElementById('console-output');
+
+  const line = document.createElement('div');
+  line.dataset.level = entry.level;
+  line.innerHTML =
+    `<span style="color:var(--muted);user-select:none;">${escHtml(entry.ts)} </span>` +
+    `<span style="color:${color};font-weight:${entry.level==='ERROR'||entry.level==='WARN'?'700':'400'};">` +
+    `[${entry.level.padEnd(5)}] </span>` +
+    `<span style="color:${color};">${escHtml(entry.msg)}</span>`;
+  out.appendChild(line);
+
+  if (document.getElementById('console-autoscroll').checked) {
+    out.scrollTop = out.scrollHeight;
+  }
+}
+
+function redrawConsole() {
+  const out    = document.getElementById('console-output');
+  const filter = document.getElementById('console-filter').value;
+  out.innerHTML = '';
+  for (const entry of consoleEntries) {
+    if (filter === 'ALL' || entry.level === filter) renderConsoleLine(entry);
+  }
+  if (document.getElementById('console-autoscroll').checked) {
+    out.scrollTop = out.scrollHeight;
+  }
+}
+
+document.getElementById('console-filter').addEventListener('change', redrawConsole);
+
+function clearConsole() {
+  consoleEntries = [];
+  document.getElementById('console-output').innerHTML = '';
+}
+
+function copyConsole() {
+  const text = consoleEntries
+    .map(e => `${e.ts} [${e.level}] ${e.msg}`)
+    .join('\n');
+  copyText(text);
+}
+
+
+// Start SSE log stream immediately
+startConsole();
+
+// ── Utilities ───────────────────────────────────────────────────────────────
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function copyText(text) {
+  navigator.clipboard.writeText(text).catch(() => {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+  });
+}
+</script>
+</body>
+</html>
