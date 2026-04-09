@@ -1,0 +1,661 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ICS Runtime Java — BFSI Demo</title>
+<style>
+  /* ── Reset & tokens ─────────────────────────────────────────── */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  :root {
+    --bg:       #0d1117;
+    --surface:  #161b22;
+    --surface2: #1c2230;
+    --border:   #30363d;
+    --text:     #e6edf3;
+    --muted:    #8b949e;
+    --accent:   #388bfd;
+    --accent2:  #3fb950;
+    --warn:     #d29922;
+    --danger:   #f85149;
+    --purple:   #bc8cff;
+    --cyan:     #39c5cf;
+    --radius:   8px;
+    --mono:     "JetBrains Mono", "Fira Code", ui-monospace, monospace;
+  }
+
+  body { background: var(--bg); color: var(--text); font-family: system-ui, sans-serif;
+         font-size: 14px; line-height: 1.6; min-height: 100vh; }
+
+  /* ── Layout ──────────────────────────────────────────────────── */
+  .app { display: grid; grid-template-rows: 56px 1fr; min-height: 100vh; }
+
+  header { background: var(--surface); border-bottom: 1px solid var(--border);
+           display: flex; align-items: center; gap: 12px; padding: 0 24px;
+           position: sticky; top: 0; z-index: 100; }
+  header .logo { font-weight: 700; font-size: 15px; color: var(--text); }
+  header .logo span { color: var(--accent); }
+  header .pill { font-size: 11px; padding: 2px 8px; border-radius: 99px;
+                 background: var(--surface2); border: 1px solid var(--border);
+                 color: var(--muted); }
+  .status-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+  .status-dot.ok  { background: var(--accent2); }
+  .status-dot.err { background: var(--danger); }
+  header .spacer { flex: 1; }
+
+  main { display: grid; grid-template-columns: 340px 1fr; gap: 0; }
+
+  /* ── Sidebar ─────────────────────────────────────────────────── */
+  .sidebar { border-right: 1px solid var(--border); padding: 20px 16px;
+             display: flex; flex-direction: column; gap: 20px; overflow-y: auto;
+             height: calc(100vh - 56px); position: sticky; top: 56px; }
+
+  .section-title { font-size: 11px; font-weight: 600; letter-spacing: .08em;
+                   text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+
+  /* ── Lead cards ─────────────────────────────────────────────── */
+  .lead-card { border: 1px solid var(--border); border-radius: var(--radius);
+               padding: 12px; cursor: pointer; transition: border-color .15s;
+               background: var(--surface); }
+  .lead-card:hover { border-color: var(--accent); }
+  .lead-card.selected { border-color: var(--accent); background: #1a2332; }
+  .lead-card .company { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
+  .lead-card .meta { display: flex; gap: 8px; flex-wrap: wrap; }
+  .lead-card .tag { font-size: 11px; padding: 1px 6px; border-radius: 4px;
+                    background: var(--surface2); color: var(--muted); }
+  .lead-card .tag.prime   { background: #0d2d1c; color: var(--accent2); }
+  .lead-card .tag.subprime{ background: #2a2010; color: var(--warn); }
+  .lead-card .tag.decline { background: #2d0d0d; color: var(--danger); }
+
+  /* ── Custom task input ──────────────────────────────────────── */
+  textarea { width: 100%; background: var(--surface); border: 1px solid var(--border);
+             border-radius: var(--radius); color: var(--text); padding: 8px;
+             font-family: var(--mono); font-size: 12px; resize: vertical;
+             line-height: 1.5; }
+  textarea::placeholder { color: var(--muted); }
+  textarea:focus { outline: none; border-color: var(--accent); }
+
+  /* ── Provider select ──────────────────────────────────────────── */
+  select { width: 100%; background: var(--surface); border: 1px solid var(--border);
+           border-radius: var(--radius); color: var(--text); padding: 6px 10px;
+           font-size: 13px; cursor: pointer; }
+  select:focus { outline: none; border-color: var(--accent); }
+
+  /* ── Run button ─────────────────────────────────────────────── */
+  .run-btn { width: 100%; padding: 10px; border-radius: var(--radius);
+             background: var(--accent); border: none; color: #fff;
+             font-weight: 600; font-size: 14px; cursor: pointer; transition: opacity .15s; }
+  .run-btn:hover { opacity: .88; }
+  .run-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+  /* ── Content area ──────────────────────────────────────────── */
+  .content { padding: 24px; overflow-y: auto; height: calc(100vh - 56px); }
+
+  /* ── Empty state ─────────────────────────────────────────────── */
+  .empty-state { display: flex; flex-direction: column; align-items: center;
+                 justify-content: center; height: 60%; gap: 12px; color: var(--muted); }
+  .empty-state .big-icon { font-size: 48px; opacity: .4; }
+
+  /* ── Progress bar ────────────────────────────────────────────── */
+  .progress-wrap { display: none; }
+  .progress-wrap.visible { display: block; margin-bottom: 16px; }
+  .progress-bar { height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; }
+  .progress-fill { height: 100%; background: var(--accent);
+                   animation: progress-anim 1.5s ease-in-out infinite; }
+  @keyframes progress-anim {
+    0%   { transform: translateX(-100%); }
+    100% { transform: translateX(200%); }
+  }
+  .progress-label { font-size: 12px; color: var(--muted); margin-top: 6px; }
+
+  /* ── Result panel ────────────────────────────────────────────── */
+  .result-panel { display: none; flex-direction: column; gap: 16px; }
+  .result-panel.visible { display: flex; }
+
+  /* Decision badge */
+  .decision-badge { display: inline-flex; align-items: center; gap: 8px;
+                    padding: 8px 16px; border-radius: 99px; font-weight: 700;
+                    font-size: 15px; }
+  .decision-badge.QUALIFIED     { background: #0d2d1c; color: var(--accent2); border: 1px solid var(--accent2); }
+  .decision-badge.NOT_QUALIFIED { background: #2d0d0d; color: var(--danger);  border: 1px solid var(--danger); }
+  .decision-badge.REVIEW_REQUIRED { background: #2a2010; color: var(--warn);  border: 1px solid var(--warn); }
+
+  /* Stat tiles */
+  .stat-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .stat-tile { background: var(--surface); border: 1px solid var(--border);
+               border-radius: var(--radius); padding: 12px 14px; }
+  .stat-tile .val { font-size: 22px; font-weight: 700; font-family: var(--mono);
+                    line-height: 1.2; }
+  .stat-tile .lbl { font-size: 11px; color: var(--muted); margin-top: 2px; }
+  .stat-tile.hit  .val { color: var(--accent2); }
+  .stat-tile.miss .val { color: var(--muted); }
+  .stat-tile.saved .val { color: var(--purple); }
+  .stat-tile.cost  .val { color: var(--cyan); }
+  .stat-tile.viol  .val { color: var(--danger); }
+  .stat-tile.viol-none .val { color: var(--accent2); }
+
+  /* Cards */
+  .card { background: var(--surface); border: 1px solid var(--border);
+          border-radius: var(--radius); overflow: hidden; }
+  .card-header { padding: 10px 14px; border-bottom: 1px solid var(--border);
+                 font-size: 12px; font-weight: 600; color: var(--muted);
+                 letter-spacing: .05em; text-transform: uppercase;
+                 display: flex; align-items: center; gap: 8px; }
+  .card-body  { padding: 14px; }
+
+  /* Tool calls timeline */
+  .tool-timeline { display: flex; flex-direction: column; gap: 8px; }
+  .tool-item { display: flex; align-items: flex-start; gap: 10px; }
+  .tool-dot  { width: 8px; height: 8px; border-radius: 50%; margin-top: 5px; flex-shrink: 0; }
+  .tool-dot.ok      { background: var(--accent2); }
+  .tool-dot.blocked { background: var(--danger); }
+  .tool-name { font-family: var(--mono); font-size: 12px; color: var(--accent); }
+  .tool-blocked-badge { font-size: 10px; padding: 1px 5px; border-radius: 3px;
+                        background: #2d0d0d; color: var(--danger); margin-left: 6px; }
+  .tool-io { font-size: 11px; color: var(--muted); font-family: var(--mono);
+             margin-top: 2px; overflow: hidden; text-overflow: ellipsis;
+             white-space: nowrap; max-width: 500px; }
+  .tool-ms  { font-size: 11px; color: var(--muted); margin-left: auto; white-space: nowrap; }
+
+  /* Violations */
+  .violation-item { background: #1a0e0e; border: 1px solid #3d1a1a;
+                    border-radius: 6px; padding: 8px 12px; font-size: 12px; }
+  .violation-rule { color: var(--danger); font-family: var(--mono); }
+  .violation-evidence { color: var(--muted); margin-top: 3px; font-style: italic; }
+
+  /* Qualification result JSON */
+  .qual-fields { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .qual-field  { background: var(--surface2); border-radius: 6px; padding: 8px 10px; }
+  .qual-field .key { font-size: 11px; color: var(--muted); }
+  .qual-field .val { font-size: 13px; font-family: var(--mono); margin-top: 2px; }
+  .qual-field .val.green  { color: var(--accent2); }
+  .qual-field .val.red    { color: var(--danger); }
+  .qual-field .val.yellow { color: var(--warn); }
+  .qual-field.full { grid-column: 1 / -1; }
+
+  .list-pills { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 4px; }
+  .pill-item   { font-size: 11px; padding: 2px 8px; border-radius: 4px;
+                 background: var(--surface); border: 1px solid var(--border); color: var(--text); }
+  .pill-item.flag { background: #2a2010; border-color: var(--warn); color: var(--warn); }
+
+  /* Raw text */
+  .raw-text { font-family: var(--mono); font-size: 12px; line-height: 1.6;
+              color: var(--muted); white-space: pre-wrap; word-break: break-word; }
+
+  /* ── Cumulative metrics bar ───────────────────────────────────── */
+  .metrics-bar { background: var(--surface); border: 1px solid var(--border);
+                 border-radius: var(--radius); padding: 12px 16px;
+                 display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+                 gap: 8px; }
+  .m-item { text-align: center; }
+  .m-val  { font-size: 18px; font-weight: 700; font-family: var(--mono); }
+  .m-lbl  { font-size: 10px; color: var(--muted); text-transform: uppercase;
+             letter-spacing: .05em; }
+
+  /* ── Logs panel ─────────────────────────────────────────────── */
+  .log-panel { background: var(--surface); border: 1px solid var(--border);
+               border-radius: var(--radius); overflow: hidden; }
+  .log-body  { height: 160px; overflow-y: auto; padding: 8px 12px;
+               font-family: var(--mono); font-size: 11px; line-height: 1.7; }
+  .log-entry { display: flex; gap: 8px; }
+  .log-ts    { color: var(--muted); flex-shrink: 0; }
+  .log-msg   { }
+  .log-info  .log-msg { color: var(--text); }
+  .log-ok    .log-msg { color: var(--accent2); }
+  .log-warn  .log-msg { color: var(--warn); }
+  .log-error .log-msg { color: var(--danger); }
+
+  /* ── Utility ─────────────────────────────────────────────────── */
+  .hidden { display: none !important; }
+  .flex-row { display: flex; align-items: center; gap: 8px; }
+  hr.divider { border: none; border-top: 1px solid var(--border); margin: 4px 0; }
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- ── Header ──────────────────────────────────────────────────── -->
+<header>
+  <div class="logo">ICS <span>Runtime</span></div>
+  <div class="pill">BFSI Lead Qualification</div>
+  <div class="pill" style="color:var(--accent2);border-color:var(--accent2)">Java</div>
+  <div class="spacer"></div>
+  <div class="flex-row" id="status-row">
+    <div class="status-dot" id="status-dot"></div>
+    <span id="status-text" style="font-size:12px;color:var(--muted)">Checking…</span>
+  </div>
+</header>
+
+<main>
+
+<!-- ── Sidebar ──────────────────────────────────────────────────── -->
+<aside class="sidebar">
+
+  <div>
+    <div class="section-title">Provider</div>
+    <select id="provider-select" onchange="onProviderChange()">
+      <option value="anthropic">Anthropic (Claude)</option>
+      <option value="openai">OpenAI (GPT)</option>
+    </select>
+    <div id="provider-warn" style="font-size:11px;color:var(--warn);margin-top:6px;display:none"></div>
+  </div>
+
+  <div>
+    <div class="section-title">Select Lead</div>
+    <div id="lead-cards" style="display:flex;flex-direction:column;gap:8px">
+      <!-- injected by JS -->
+    </div>
+  </div>
+
+  <div>
+    <div class="section-title">Custom Task <span style="color:var(--muted);font-weight:400;text-transform:none">(optional)</span></div>
+    <textarea id="custom-task" rows="3" placeholder="Override the default task prompt…"></textarea>
+  </div>
+
+  <button class="run-btn" id="run-btn" onclick="runQualification()" disabled>
+    Run Qualification
+  </button>
+
+  <div>
+    <div class="section-title">Cumulative Metrics</div>
+    <div class="metrics-bar" id="metrics-bar">
+      <div class="m-item"><div class="m-val" id="m-runs">0</div><div class="m-lbl">Runs</div></div>
+      <div class="m-item"><div class="m-val" id="m-hit-rate" style="color:var(--accent2)">—</div><div class="m-lbl">Cache hit</div></div>
+      <div class="m-item"><div class="m-val" id="m-saved" style="color:var(--purple)">0</div><div class="m-lbl">Saved tkns</div></div>
+      <div class="m-item"><div class="m-val" id="m-cost" style="color:var(--cyan)">$0</div><div class="m-lbl">Total cost</div></div>
+    </div>
+  </div>
+
+  <div>
+    <div class="section-title">Live Logs</div>
+    <div class="log-panel">
+      <div class="log-body" id="log-body"></div>
+    </div>
+  </div>
+
+</aside>
+
+<!-- ── Main content ─────────────────────────────────────────────── -->
+<section class="content" id="content">
+
+  <div class="empty-state" id="empty-state">
+    <div class="big-icon">🏦</div>
+    <div style="font-weight:600">Select a lead and click Run</div>
+    <div style="color:var(--muted);font-size:13px">
+      Demonstrates caching · tool contracts · schema validation
+    </div>
+  </div>
+
+  <div class="progress-wrap" id="progress-wrap">
+    <div class="progress-bar"><div class="progress-fill"></div></div>
+    <div class="progress-label" id="progress-label">Initialising agent…</div>
+  </div>
+
+  <div class="result-panel" id="result-panel">
+
+    <!-- Decision header -->
+    <div class="flex-row" style="flex-wrap:wrap;gap:12px">
+      <div class="decision-badge" id="decision-badge">—</div>
+      <div style="color:var(--muted);font-size:12px" id="result-meta"></div>
+    </div>
+
+    <!-- Stat tiles -->
+    <div class="stat-grid" id="stat-grid"></div>
+
+    <!-- Tool calls -->
+    <div class="card" id="tool-card">
+      <div class="card-header">⚙ Tool Calls</div>
+      <div class="card-body">
+        <div class="tool-timeline" id="tool-timeline"></div>
+      </div>
+    </div>
+
+    <!-- Violations -->
+    <div class="card" id="violations-card" style="display:none">
+      <div class="card-header" style="color:var(--danger)">⚠ Contract Violations</div>
+      <div class="card-body" id="violations-body"></div>
+    </div>
+
+    <!-- Qualification result -->
+    <div class="card" id="qual-card" style="display:none">
+      <div class="card-header">📋 Qualification Result</div>
+      <div class="card-body" id="qual-body"></div>
+    </div>
+
+    <!-- Raw response -->
+    <div class="card">
+      <div class="card-header">
+        💬 Model Response
+        <button onclick="toggleRaw()" style="margin-left:auto;background:none;border:none;color:var(--muted);cursor:pointer;font-size:11px" id="raw-toggle-btn">Show</button>
+      </div>
+      <div class="card-body" id="raw-body" style="display:none">
+        <pre class="raw-text" id="raw-text"></pre>
+      </div>
+    </div>
+
+  </div><!-- /result-panel -->
+
+</section>
+</main>
+</div><!-- /app -->
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────
+let _status = {};
+let _leads = {};
+let _selectedLead = null;
+let _running = false;
+
+// ── Init ───────────────────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', async () => {
+  await Promise.all([checkStatus(), loadLeads()]);
+  connectLogs();
+  setInterval(refreshMetrics, 5000);
+});
+
+// ── Status ─────────────────────────────────────────────────────────────────
+async function checkStatus() {
+  try {
+    const r = await fetch('/api/status');
+    _status = await r.json();
+    onProviderChange();
+  } catch(e) {
+    document.getElementById('status-text').textContent = 'Server offline';
+  }
+}
+
+function onProviderChange() {
+  const provider = document.getElementById('provider-select').value;
+  const dot      = document.getElementById('status-dot');
+  const txt      = document.getElementById('status-text');
+  const warn     = document.getElementById('provider-warn');
+  const btn      = document.getElementById('run-btn');
+
+  const hasKey = provider === 'anthropic' ? _status.anthropic_key : _status.openai_key;
+  const ver    = provider === 'anthropic' ? _status.anthropic_version : _status.openai_version;
+
+  if (hasKey) {
+    dot.className = 'status-dot ok';
+    txt.textContent = `${provider} / ${ver || '?'}`;
+    warn.style.display = 'none';
+    btn.disabled = _selectedLead === null || _running;
+  } else {
+    dot.className = 'status-dot err';
+    txt.textContent = `No ${provider.toUpperCase()}_API_KEY`;
+    warn.textContent = `Set ${provider.toUpperCase()}_API_KEY to enable live runs`;
+    warn.style.display = 'block';
+    btn.disabled = true;
+  }
+}
+
+// ── Leads ──────────────────────────────────────────────────────────────────
+async function loadLeads() {
+  try {
+    const r = await fetch('/api/leads');
+    const data = await r.json();
+    const container = document.getElementById('lead-cards');
+    container.innerHTML = '';
+    for (const lead of data.leads) {
+      _leads[lead.id] = lead;
+      const card = document.createElement('div');
+      card.className = 'lead-card';
+      card.dataset.id = lead.id;
+      card.onclick = () => selectLead(lead.id);
+      card.innerHTML = `
+        <div class="company">${lead.company}</div>
+        <div class="meta" style="margin-top:6px">
+          <span class="tag">${lead.id}</span>
+          <span class="tag ${lead.tier}">${lead.tier.toUpperCase()}</span>
+          <span class="tag">$${(lead.revenue_usd/1000).toFixed(0)}k</span>
+          <span class="tag">DSCR ${lead.dscr}</span>
+        </div>`;
+      container.appendChild(card);
+    }
+  } catch(e) { console.error('loadLeads', e); }
+}
+
+function selectLead(id) {
+  _selectedLead = id;
+  document.querySelectorAll('.lead-card').forEach(c => {
+    c.classList.toggle('selected', c.dataset.id === id);
+  });
+  onProviderChange();
+}
+
+// ── Run qualification ──────────────────────────────────────────────────────
+async function runQualification() {
+  if (_running || !_selectedLead) return;
+  _running = true;
+
+  const provider   = document.getElementById('provider-select').value;
+  const customTask = document.getElementById('custom-task').value.trim();
+  const runBtn     = document.getElementById('run-btn');
+
+  runBtn.disabled = true;
+  runBtn.textContent = 'Running…';
+  showProgress(`Qualifying ${_selectedLead}…`);
+  hideResult();
+
+  const url = `/api/qualify/stream?lead_id=${encodeURIComponent(_selectedLead)}&provider=${encodeURIComponent(provider)}${customTask ? '&custom_task=' + encodeURIComponent(customTask) : ''}`;
+  const es = new EventSource(url);
+
+  es.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+    if (msg.type === 'log') {
+      setProgressLabel(msg.msg);
+    } else if (msg.type === 'result') {
+      es.close();
+      hideProgress();
+      renderResult(msg.data);
+      refreshMetrics();
+      _running = false;
+      runBtn.disabled = false;
+      runBtn.textContent = 'Run Qualification';
+    } else if (msg.type === 'error') {
+      es.close();
+      hideProgress();
+      showError(msg.message);
+      _running = false;
+      runBtn.disabled = false;
+      runBtn.textContent = 'Run Qualification';
+    } else if (msg.type === 'done') {
+      es.close();
+    }
+  };
+
+  es.onerror = () => {
+    es.close();
+    hideProgress();
+    showError('Connection error — check the server console.');
+    _running = false;
+    runBtn.disabled = false;
+    runBtn.textContent = 'Run Qualification';
+  };
+}
+
+// ── Progress ───────────────────────────────────────────────────────────────
+function showProgress(label) {
+  document.getElementById('empty-state').style.display  = 'none';
+  document.getElementById('progress-wrap').classList.add('visible');
+  setProgressLabel(label);
+}
+function setProgressLabel(label) {
+  document.getElementById('progress-label').textContent = label;
+}
+function hideProgress() {
+  document.getElementById('progress-wrap').classList.remove('visible');
+}
+function hideResult() {
+  document.getElementById('result-panel').classList.remove('visible');
+}
+function showError(msg) {
+  document.getElementById('empty-state').style.display = 'flex';
+  document.getElementById('empty-state').innerHTML = `
+    <div style="color:var(--danger);font-size:32px">✗</div>
+    <div style="font-weight:600;color:var(--danger)">Error</div>
+    <div style="color:var(--muted);font-size:13px;text-align:center;max-width:400px">${msg}</div>`;
+}
+
+// ── Render result ──────────────────────────────────────────────────────────
+function renderResult(data) {
+  document.getElementById('empty-state').style.display = 'none';
+  document.getElementById('result-panel').classList.add('visible');
+
+  // Decision badge
+  const decision  = data.parsed?.decision || (data.validated ? 'UNKNOWN' : 'ERROR');
+  const badge = document.getElementById('decision-badge');
+  badge.className = `decision-badge ${decision}`;
+  const icons = { QUALIFIED: '✓', NOT_QUALIFIED: '✗', REVIEW_REQUIRED: '⚑' };
+  badge.innerHTML = `${icons[decision] || '?'} ${decision?.replace(/_/g,' ')}`;
+
+  // Meta
+  const score = data.parsed?.score ?? '—';
+  const risk  = data.parsed?.risk_category ?? '—';
+  document.getElementById('result-meta').innerHTML =
+    `<span>Score: <b>${score}/100</b></span> &nbsp;·&nbsp;
+     <span>Risk: <b>${risk}</b></span> &nbsp;·&nbsp;
+     <span style="color:var(--muted)">${data.model} · ${data.latency_ms}ms</span>`;
+
+  // Stats
+  const statGrid = document.getElementById('stat-grid');
+  const cacheHit = data.cache_hit;
+  statGrid.innerHTML = `
+    ${tile(cacheHit ? 'HIT' : 'MISS', 'Cache', cacheHit ? 'hit' : 'miss')}
+    ${tile(data.cache_write ? fmt(data.cache_write_tokens) : '—', 'Cache write', '')}
+    ${tile(fmt(data.tokens_saved), 'Tokens saved', 'saved')}
+    ${tile('$' + data.cost_usd.toFixed(4), 'Cost', 'cost')}
+    ${tile(fmt(data.input_tokens), 'Input tokens', '')}
+    ${tile(fmt(data.output_tokens), 'Output tokens', '')}
+    ${tile(data.violations.length, 'Violations', data.violations.length ? 'viol' : 'viol-none')}
+    ${tile(data.tool_calls.length, 'Tool calls', '')}`;
+
+  // Tool calls
+  const timeline = document.getElementById('tool-timeline');
+  if (data.tool_calls.length === 0) {
+    timeline.innerHTML = '<span style="color:var(--muted);font-size:12px">No tools invoked</span>';
+  } else {
+    timeline.innerHTML = data.tool_calls.map(tc => {
+      const inputStr = JSON.stringify(tc.input);
+      const outputStr = typeof tc.output === 'object' ? JSON.stringify(tc.output) : String(tc.output);
+      return `<div class="tool-item">
+        <div class="tool-dot ${tc.blocked ? 'blocked' : 'ok'}"></div>
+        <div style="flex:1;min-width:0">
+          <div class="flex-row">
+            <span class="tool-name">${tc.name}</span>
+            ${tc.blocked ? '<span class="tool-blocked-badge">BLOCKED</span>' : ''}
+            <span class="tool-ms">${tc.duration_ms}ms</span>
+          </div>
+          <div class="tool-io">in: ${inputStr}</div>
+          <div class="tool-io">out: ${outputStr.substring(0, 200)}</div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  // Violations
+  const vCard = document.getElementById('violations-card');
+  const vBody = document.getElementById('violations-body');
+  if (data.violations.length > 0) {
+    vCard.style.display = 'block';
+    vBody.innerHTML = data.violations.map(v => `
+      <div class="violation-item" style="margin-bottom:8px">
+        <div class="violation-rule">${v.rule}</div>
+        <div style="font-size:11px;color:var(--muted);margin-top:2px">
+          ${v.kind}/${v.severity}
+        </div>
+        ${v.evidence ? `<div class="violation-evidence">"${v.evidence}"</div>` : ''}
+      </div>`).join('');
+  } else {
+    vCard.style.display = 'none';
+  }
+
+  // Qual result card
+  const qCard = document.getElementById('qual-card');
+  const qBody = document.getElementById('qual-body');
+  if (data.parsed) {
+    qCard.style.display = 'block';
+    const p = data.parsed;
+    const decColor = {QUALIFIED:'green', NOT_QUALIFIED:'red', REVIEW_REQUIRED:'yellow'}[p.decision] || '';
+    const riskColor = {LOW:'green', HIGH:'red', MEDIUM:'yellow'}[p.risk_category] || '';
+    qBody.innerHTML = `<div class="qual-fields">
+      ${qf('Decision', `<span class="val ${decColor}">${p.decision}</span>`)}
+      ${qf('Score', `<span class="val">${p.score}/100</span>`)}
+      ${qf('Risk', `<span class="val ${riskColor}">${p.risk_category}</span>`)}
+      ${qf('Lead ID', `<span class="val">${p.lead_id}</span>`)}
+      ${qf('Rationale', `<span class="val" style="font-size:12px;color:var(--text);white-space:normal">${p.rationale}</span>`, true)}
+      ${p.recommended_products?.length ? qf('Products', pills(p.recommended_products, ''), true) : ''}
+      ${p.next_steps?.length ? qf('Next Steps', pills(p.next_steps, ''), true) : ''}
+      ${p.compliance_flags?.length ? qf('Compliance', pills(p.compliance_flags, 'flag'), true) : ''}
+    </div>`;
+  } else {
+    qCard.style.display = 'none';
+  }
+
+  // Raw text
+  document.getElementById('raw-text').textContent = data.text || '(empty)';
+  document.getElementById('raw-body').style.display = 'none';
+  document.getElementById('raw-toggle-btn').textContent = 'Show';
+}
+
+function tile(val, label, cls) {
+  return `<div class="stat-tile ${cls}">
+    <div class="val">${val}</div>
+    <div class="lbl">${label}</div>
+  </div>`;
+}
+
+function qf(key, valHtml, full) {
+  return `<div class="qual-field ${full ? 'full' : ''}">
+    <div class="key">${key}</div>
+    ${valHtml}
+  </div>`;
+}
+
+function pills(items, cls) {
+  return `<div class="list-pills">${items.map(i => `<span class="pill-item ${cls}">${i}</span>`).join('')}</div>`;
+}
+
+function fmt(n) {
+  return typeof n === 'number' ? n.toLocaleString() : n;
+}
+
+function toggleRaw() {
+  const body = document.getElementById('raw-body');
+  const btn  = document.getElementById('raw-toggle-btn');
+  const shown = body.style.display !== 'none';
+  body.style.display = shown ? 'none' : 'block';
+  btn.textContent    = shown ? 'Show' : 'Hide';
+}
+
+// ── Metrics ────────────────────────────────────────────────────────────────
+async function refreshMetrics() {
+  try {
+    const r    = await fetch('/api/metrics');
+    const data = await r.json();
+    document.getElementById('m-runs').textContent     = data.total_runs;
+    document.getElementById('m-hit-rate').textContent = data.total_runs ? data.cache_hit_rate + '%' : '—';
+    document.getElementById('m-saved').textContent    = fmt(data.total_tokens_saved);
+    document.getElementById('m-cost').textContent     = '$' + (data.total_cost_usd || 0).toFixed(4);
+  } catch(e) {}
+}
+
+// ── Logs ───────────────────────────────────────────────────────────────────
+function connectLogs() {
+  const body = document.getElementById('log-body');
+  const es   = new EventSource('/api/logs');
+  es.onmessage = (e) => {
+    const entry = JSON.parse(e.data);
+    const div = document.createElement('div');
+    div.className = `log-entry log-${entry.level}`;
+    div.innerHTML = `<span class="log-ts">${entry.ts}</span><span class="log-msg">${entry.msg}</span>`;
+    body.appendChild(div);
+    // keep last 200 entries
+    while (body.children.length > 200) body.removeChild(body.firstChild);
+    body.scrollTop = body.scrollHeight;
+  };
+  es.onerror = () => { /* ignore reconnect noise */ };
+}
+</script>
+</body>
+</html>
