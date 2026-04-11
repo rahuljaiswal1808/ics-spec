@@ -170,6 +170,14 @@ The tester sends two requests per invocation — one **naive** (all layers flat,
 
 ---
 
+## How does ICS compare to existing tools?
+
+ICS is often compared to LangChain, RAG, and ChatGPT memory. The short answer: they solve different problems and all three compose with ICS rather than replace it.
+
+See [`COMPARISON.md`](COMPARISON.md) for a detailed breakdown covering LangChain, RAG, and ChatGPT memory, including a summary comparison table.
+
+---
+
 ## Status
 
 ICS is an **initial public draft (v0.1)**.
