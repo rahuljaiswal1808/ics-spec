@@ -5,6 +5,8 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Version](https://img.shields.io/badge/version-v0.1-orange)
 
+![ICS demo](demo.svg)
+
 Your LLM reprocesses the same context on every call. ICS caches it — **77.8% cheaper**.
 
 ![77.8% cost reduction (Anthropic, N=10)](https://img.shields.io/badge/cost_reduction-77.8%25-brightgreen) ![90%+ constraint compliance (R=8 benchmark)](https://img.shields.io/badge/constraint_compliance-90%25%2B-blue) ![5 CLI tools](https://img.shields.io/badge/CLI_tools-5-orange)

@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 680 546" width="680" height="546">
+<defs>
+<style>
+text { font-family: 'Courier New', Courier, 'Liberation Mono', monospace; font-size: 12px; }
+</style>
+</defs>
+
+<!-- Terminal background -->
+<rect width="680" height="546" rx="8" fill="#0d1117"/>
+
+<!-- Title bar -->
+<rect width="680" height="32" rx="8" fill="#161b22"/>
+<rect y="24" width="680" height="8" fill="#161b22"/>
+<line x1="0" y1="32" x2="680" y2="32" stroke="#30363d" stroke-width="1"/>
+
+<!-- Traffic lights -->
+<circle cx="20" cy="16" r="5" fill="#ff5f56"/>
+<circle cx="38" cy="16" r="5" fill="#ffbd2e"/>
+<circle cx="56" cy="16" r="5" fill="#27c93f"/>
+
+<!-- Terminal title -->
+<text x="340" y="21" font-size="11" fill="#6e7681" text-anchor="middle">python ics_demo.py</text>
+
+<!-- ─────────────────────────────────────────────────── -->
+<!-- Content area — y starts at 48, line-height 18      -->
+<!-- ─────────────────────────────────────────────────── -->
+
+<!-- Heavy divider -->
+<text x="16" y="48" fill="#388bfd">&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;</text>
+
+<!-- Demo title -->
+<text x="30" y="66" fill="#f0f6fc" font-weight="bold">ICS Token Efficiency Demo</text>
+
+<!-- File -->
+<text x="30" y="84" fill="#8b949e">File: examples/payments-platform.ics</text>
+
+<!-- Heavy divider -->
+<text x="16" y="102" fill="#388bfd">&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;</text>
+
+<!-- TOKEN COUNTS section header -->
+<text x="16" y="126" fill="#f0f6fc" font-weight="bold">TOKEN COUNTS<tspan fill="#8b949e" font-weight="normal">  (approx: 1 token &#x2248; 4 chars)</tspan></text>
+
+<!-- Light divider -->
+<text x="16" y="144" fill="#3d4450">&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;</text>
+
+<!-- Total tokens -->
+<text x="30" y="162" fill="#c9d1d9">Total tokens:      <tspan fill="#79c0ff">4,611</tspan></text>
+
+<!-- Permanent layer -->
+<text x="30" y="180" fill="#c9d1d9">Permanent layer:   <tspan fill="#79c0ff">4,133</tspan>  (IMMUTABLE_CONTEXT + CAPABILITY_DECLARATION)</text>
+
+<!-- Variable layer -->
+<text x="30" y="198" fill="#c9d1d9">Variable layer:      <tspan fill="#79c0ff">477</tspan>  (SESSION_STATE + TASK_PAYLOAD + OUTPUT_CONTRACT)</text>
+
+<!-- Naive explanation -->
+<text x="30" y="222" fill="#c9d1d9">Naive:  <tspan fill="#79c0ff">4,611</tspan> tokens at full rate &#x2014; every single call</text>
+
+<!-- ICS call 1 -->
+<text x="30" y="240" fill="#c9d1d9">ICS:    call 1  &#x2192;  <tspan fill="#79c0ff">4,133</tspan> cache-write  +  <tspan fill="#79c0ff">477</tspan> normal</text>
+
+<!-- ICS call 2+ -->
+<text x="30" y="258" fill="#c9d1d9">        call 2+ &#x2192;  <tspan fill="#79c0ff">4,133</tspan> cache-read   +  <tspan fill="#79c0ff">477</tspan> normal</text>
+
+<!-- Cache-read note -->
+<text x="30" y="276" fill="#6e7681">        (cache-read = 10% of full input rate)</text>
+
+<!-- PROJECTED COST section header -->
+<text x="16" y="300" fill="#f0f6fc" font-weight="bold">PROJECTED COST<tspan fill="#8b949e" font-weight="normal">  (claude-sonnet-4-6  &#xB7;  $3.00/M input)</tspan></text>
+
+<!-- Light divider -->
+<text x="16" y="318" fill="#3d4450">&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;</text>
+
+<!-- Column headers -->
+<text x="30" y="336" fill="#8b949e" font-weight="bold">Calls</text>
+<text x="200" y="336" fill="#8b949e" font-weight="bold" text-anchor="end">Naive</text>
+<text x="310" y="336" fill="#8b949e" font-weight="bold" text-anchor="end">ICS</text>
+<text x="406" y="336" fill="#8b949e" font-weight="bold" text-anchor="end">Savings</text>
+
+<!-- Dash separator -->
+<text x="30" y="354" fill="#3d4450">&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500; &#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500; &#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500; &#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;&#x2500;</text>
+
+<!-- N=1 row -->
+<text x="30" y="372" fill="#c9d1d9">N=1</text>
+<text x="200" y="372" fill="#c9d1d9" text-anchor="end">$0.01383</text>
+<text x="310" y="372" fill="#c9d1d9" text-anchor="end">$0.01693</text>
+<text x="406" y="372" fill="#f85149" text-anchor="end">-22.4%</text>
+
+<!-- N=5 row -->
+<text x="30" y="390" fill="#c9d1d9">N=5</text>
+<text x="200" y="390" fill="#c9d1d9" text-anchor="end">$0.06915</text>
+<text x="310" y="390" fill="#c9d1d9" text-anchor="end">$0.02761</text>
+<text x="406" y="390" fill="#56d364" text-anchor="end">+60.1%</text>
+
+<!-- N=10 row -->
+<text x="30" y="408" fill="#c9d1d9">N=10</text>
+<text x="200" y="408" fill="#c9d1d9" text-anchor="end">$0.13830</text>
+<text x="310" y="408" fill="#c9d1d9" text-anchor="end">$0.04097</text>
+<text x="406" y="408" fill="#56d364" text-anchor="end">+70.4%</text>
+
+<!-- Break-even note -->
+<text x="30" y="432" fill="#c9d1d9">Break-even: ICS becomes cheaper from <tspan fill="#56d364">call 2</tspan> onwards.</text>
+
+<!-- Heavy divider -->
+<text x="16" y="456" fill="#388bfd">&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;</text>
+
+<!-- Summary line 1 -->
+<text x="30" y="474" fill="#c9d1d9" font-weight="bold">Summary: ICS saves ~<tspan fill="#79c0ff">4,133</tspan> tokens per call. Break-even: <tspan fill="#56d364">call 2</tspan>.</text>
+
+<!-- Summary line 2 -->
+<text x="30" y="492" fill="#c9d1d9">         At N=10: <tspan fill="#56d364" font-weight="bold">70.4% cheaper</tspan> ($0.09733 saved per 10-call session).</text>
+
+<!-- Heavy divider -->
+<text x="16" y="510" fill="#388bfd">&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;&#x2550;</text>
+
+</svg>
