@@ -1,5 +1,10 @@
 # Instruction Contract Specification (ICS)
 
+![CI](https://github.com/rahuljaiswal1808/ics-spec/actions/workflows/ci.yml/badge.svg)
+![Python](https://img.shields.io/badge/python-3.11%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Version](https://img.shields.io/badge/version-v0.1-orange)
+
 Your LLM reprocesses the same context on every call. ICS caches it — **77.8% cheaper**.
 
 ![77.8% cost reduction (Anthropic, N=10)](https://img.shields.io/badge/cost_reduction-77.8%25-brightgreen) ![90%+ constraint compliance (R=8 benchmark)](https://img.shields.io/badge/constraint_compliance-90%25%2B-blue) ![5 CLI tools](https://img.shields.io/badge/CLI_tools-5-orange)

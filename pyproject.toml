@@ -30,6 +30,8 @@ openai = ["openai>=1.0"]
 gemini = ["google-genai>=0.8"]
 # For exact BPE token counting in ics-analyze --exact
 exact = ["tiktoken>=0.7"]
+# Live API testing (Anthropic)
+live = ["anthropic>=0.40"]
 # Install everything
 all = ["anthropic>=0.40", "openai>=1.0", "google-genai>=0.8", "tiktoken>=0.7"]
 
