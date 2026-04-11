@@ -1,8 +1,33 @@
 # Instruction Contract Specification (ICS)
 
-ICS defines a deterministic, token-aware contract for structuring instructions provided to Large Language Models (LLMs).
+Your LLM reprocesses the same context on every call. ICS caches it — **77.8% cheaper**.
 
-It treats instructions as **interfaces**, not conversations.
+![77.8% cost reduction (Anthropic, N=10)](https://img.shields.io/badge/cost_reduction-77.8%25-brightgreen) ![90%+ constraint compliance (R=8 benchmark)](https://img.shields.io/badge/constraint_compliance-90%25%2B-blue) ![5 CLI tools](https://img.shields.io/badge/CLI_tools-5-orange)
+
+Every LLM call sends the full prompt text to the model — domain facts, rules, permissions, and task description bundled in one flat string. The model processes all of it from scratch on every invocation, paying the same token cost whether the stable content changed or not. When constraints are implicit rather than declared, the model guesses at the rules and occasionally violates them; the standard response is to retry, paying the full context cost again for only a probabilistic improvement. The root cause is not the prompt wording — it is the absence of structure that separates what never changes from what varies call to call.
+
+ICS divides every instruction into five ordered layers by lifetime: immutable domain facts, declared capability constraints, temporary session state, the current task, and an output contract. The two stable layers — `IMMUTABLE_CONTEXT` and `CAPABILITY_DECLARATION` — sit above a cache boundary marker, so they are written once to the KV cache and read back at roughly 10× lower cost on every subsequent call. Constraints are machine-verifiable and output shapes are declared before execution, replacing retry-as-fix with validation-before-send. The toolchain covers the full document lifecycle: scaffold → validate → lint → diff → CI report.
+
+### Quick start
+
+```bash
+# Stdlib only — validator and token analyzer, no external deps
+pip install .
+
+# With live API testing support
+pip install ".[live]"
+
+# With exact BPE token counting
+pip install ".[all]"
+```
+
+Once installed, the CLI tools are available immediately:
+
+```bash
+ics-validate  my_instruction.txt
+ics-analyze   my_instruction.txt --invocations 10
+ics-live-test my_instruction.txt --invocations 5   # requires ANTHROPIC_API_KEY
+```
 
 ---
 
@@ -67,27 +92,6 @@ An instruction is ICS-compliant if it satisfies all rules in `ICS-v0.1.md`. See 
 | `APPENDIX-C.md` | Quality benchmark scenario catalogue (20 scenarios, payments-platform domain) |
 | `experiments.md` | Empirical evidence for the token-savings claim (§2.2, §2.4) |
 | `paper.tex` | LaTeX source for the ICS technical paper (compiled to `paper.pdf`) |
-
-### Quick start: installation
-
-```bash
-# Stdlib only — validator and token analyzer, no external deps
-pip install .
-
-# With live API testing support
-pip install ".[live]"
-
-# With exact BPE token counting
-pip install ".[all]"
-```
-
-Once installed, the three tools are available as CLI commands:
-
-```bash
-ics-validate  my_instruction.txt
-ics-analyze   my_instruction.txt --invocations 10
-ics-live-test my_instruction.txt --invocations 5   # requires ANTHROPIC_API_KEY
-```
 
 ## Tools
 
