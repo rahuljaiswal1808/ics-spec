@@ -29,6 +29,14 @@ ics-analyze   my_instruction.txt --invocations 10
 ics-live-test my_instruction.txt --invocations 5   # requires ANTHROPIC_API_KEY
 ```
 
+```bash
+# Zero-config demo — no API key needed
+python ics_demo.py
+
+# Live demo with real API calls
+python ics_demo.py --live  # requires ANTHROPIC_API_KEY
+```
+
 ---
 
 ## What problem does ICS solve?
