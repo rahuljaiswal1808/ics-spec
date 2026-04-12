@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 *.pyo
+*.egg-info/
 
 # LaTeX build artifacts
 *.aux
@@ -12,3 +13,4 @@ __pycache__/
 *.fdb_latexmk
 *.synctex.gz
 .env
+HN_POST.md

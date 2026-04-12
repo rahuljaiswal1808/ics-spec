@@ -1,8 +1,48 @@
 # Instruction Contract Specification (ICS)
 
-ICS defines a deterministic, token-aware contract for structuring instructions provided to Large Language Models (LLMs).
+![CI](https://github.com/rahuljaiswal1808/ics-spec/actions/workflows/ci.yml/badge.svg)
+![Python](https://img.shields.io/badge/python-3.11%2B-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![Version](https://img.shields.io/badge/version-v0.1-orange)
 
-It treats instructions as **interfaces**, not conversations.
+![ICS demo](demo.svg)
+
+Your LLM reprocesses the same context on every call. ICS caches it — **77.8% cheaper**.
+
+![77.8% cost reduction (Anthropic, N=10)](https://img.shields.io/badge/cost_reduction-77.8%25-brightgreen) ![90%+ constraint compliance (R=8 benchmark)](https://img.shields.io/badge/constraint_compliance-90%25%2B-blue) ![5 CLI tools](https://img.shields.io/badge/CLI_tools-5-orange)
+
+Every LLM call sends the full prompt text to the model — domain facts, rules, permissions, and task description bundled in one flat string. The model processes all of it from scratch on every invocation, paying the same token cost whether the stable content changed or not. When constraints are implicit rather than declared, the model guesses at the rules and occasionally violates them; the standard response is to retry, paying the full context cost again for only a probabilistic improvement. The root cause is not the prompt wording — it is the absence of structure that separates what never changes from what varies call to call.
+
+ICS divides every instruction into five ordered layers by lifetime: immutable domain facts, declared capability constraints, temporary session state, the current task, and an output contract. The two stable layers — `IMMUTABLE_CONTEXT` and `CAPABILITY_DECLARATION` — sit above a cache boundary marker, so they are written once to the KV cache and read back at roughly 10× lower cost on every subsequent call. Constraints are machine-verifiable and output shapes are declared before execution, replacing retry-as-fix with validation-before-send. The toolchain covers the full document lifecycle: scaffold → validate → lint → diff → CI report.
+
+### Quick start
+
+```bash
+# Stdlib only — validator and token analyzer, no external deps
+pip install .
+
+# With live API testing support
+pip install ".[live]"
+
+# With exact BPE token counting
+pip install ".[all]"
+```
+
+Once installed, the CLI tools are available immediately:
+
+```bash
+ics-validate  my_instruction.txt
+ics-analyze   my_instruction.txt --invocations 10
+ics-live-test my_instruction.txt --invocations 5   # requires ANTHROPIC_API_KEY
+```
+
+```bash
+# Zero-config demo — no API key needed
+python ics_demo.py
+
+# Live demo with real API calls
+python ics_demo.py --live  # requires ANTHROPIC_API_KEY
+```
 
 ---
 
@@ -68,27 +108,6 @@ An instruction is ICS-compliant if it satisfies all rules in `ICS-v0.1.md`. See 
 | `experiments.md` | Empirical evidence for the token-savings claim (§2.2, §2.4) |
 | `paper.tex` | LaTeX source for the ICS technical paper (compiled to `paper.pdf`) |
 
-### Quick start: installation
-
-```bash
-# Stdlib only — validator and token analyzer, no external deps
-pip install .
-
-# With live API testing support
-pip install ".[live]"
-
-# With exact BPE token counting
-pip install ".[all]"
-```
-
-Once installed, the three tools are available as CLI commands:
-
-```bash
-ics-validate  my_instruction.txt
-ics-analyze   my_instruction.txt --invocations 10
-ics-live-test my_instruction.txt --invocations 5   # requires ANTHROPIC_API_KEY
-```
-
 ## Tools
 
 The ICS toolchain covers the full document lifecycle: scaffolding → editing → validation → linting → diffing → CI reporting.
@@ -150,6 +169,14 @@ python ics_live_test.py --dry-run
 The tester sends two requests per invocation — one **naive** (all layers flat, no caching) and one **ICS** (permanent layers marked `cache_control=ephemeral`) — and reads real token counts from the API response's `usage` field, including `cache_creation_input_tokens` and `cache_read_input_tokens`.
 
 > **Note on cache activation:** Anthropic prompt caching requires the cached block to reach a minimum token threshold. For `claude-haiku-4-5-20251001` (and Claude 4-series models generally) the threshold is **≥ ~4,096 tokens**; older Claude 3 models used 1,024. The built-in APPENDIX-A examples are small demonstration snippets and will not trigger cache hits regardless of model. Use `examples/payments-platform.ics` (4,115 permanent-layer tokens, verified against the API) to observe real `cache_read_input_tokens` savings in the ICS column.
+
+---
+
+## How does ICS compare to existing tools?
+
+ICS is often compared to LangChain, RAG, and ChatGPT memory. The short answer: they solve different problems and all three compose with ICS rather than replace it.
+
+See [`COMPARISON.md`](COMPARISON.md) for a detailed breakdown covering LangChain, RAG, and ChatGPT memory, including a summary comparison table.
 
 ---
 

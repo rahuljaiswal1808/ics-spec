@@ -295,6 +295,7 @@ REQUIRE docstring ON all new public functions and classes
 REQUIRE backward compatibility WITH gateway/v2/ API contracts
 REQUIRE idempotency handling ON all new payment-creating code paths
 REQUIRE unit test coverage ON all new ledger entry logic
+DENY    modification of existing webhook delivery logic, retry schedule, or Redis tracking keys
 ###END:CAPABILITY_DECLARATION###
 
 ###ICS:SESSION_STATE###
@@ -314,7 +315,6 @@ and the final attempt has failed, publish a WEBHOOK_EXHAUSTED event to the
 payments SNS topic using the existing get_sns_topic_arn() helper.
 
 The event payload must conform to the schema established in SESSION_STATE.
-The existing delivery logic, retry schedule, and Redis tracking must not change.
 ###END:TASK_PAYLOAD###
 
 ###ICS:OUTPUT_CONTRACT###
