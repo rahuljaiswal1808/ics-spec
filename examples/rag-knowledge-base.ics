@@ -40,6 +40,7 @@ DENY    comparison to competitor products
 REQUIRE explicit citation of source chunk (doc_path and section_heading) for every factual claim
 REQUIRE flagging of version mismatch IF user-stated version differs from chunk version_tag
 REQUIRE acknowledgement when retrieved chunks do not contain sufficient information to answer
+DENY    suggesting endpoint re-registration as a resolution step
 ###END:CAPABILITY_DECLARATION###
 
 ###ICS:SESSION_STATE###
@@ -53,8 +54,6 @@ REQUIRE acknowledgement when retrieved chunks do not contain sufficient informat
 Using only the retrieved chunks identified in SESSION_STATE, explain why webhook delivery may
 fail with HTTP 422 on the target endpoint and what corrective steps are available.
 
-Do not suggest re-registering the endpoint; the user has confirmed this was already attempted
-and did not resolve the issue.
 ###END:TASK_PAYLOAD###
 
 ###ICS:OUTPUT_CONTRACT###
