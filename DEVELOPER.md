@@ -1,7 +1,8 @@
 # ICS SDK — Developer Guide
 
 This guide covers everything you need to build with the ICS tools: the prompt
-library (Python and TypeScript), the auto-classifier, and the validator.
+library (Python and TypeScript), the auto-classifier, the validator, and the
+Java runtime.
 
 ---
 
@@ -15,6 +16,7 @@ library (Python and TypeScript), the auto-classifier, and the validator.
 6. [Validator](#6-validator)
 7. [CLI reference](#7-cli-reference)
 8. [Integration patterns](#8-integration-patterns)
+9. [Java runtime](#9-java-runtime)
 
 ---
 
@@ -714,6 +716,388 @@ ics-validate my_prompt.ics
 
 ---
 
+## 9. Java runtime
+
+**Location:** `ics-runtime/java/`
+
+The Java runtime is a full port of the Python ICS Runtime — same five-layer
+architecture, same ICS contract model, compatible with both Anthropic and
+OpenAI providers.
+
+**Requirements:** Java 17+, Maven 3.8+
+
+---
+
+### 9.1 Build
+
+```bash
+# Build and install the library JAR into your local Maven cache
+cd ics-runtime/java
+mvn install -DskipTests
+
+# Build the Javalin web demo fat-jar
+cd ../java_web_demo
+mvn package -DskipTests
+```
+
+To use the library in another Maven project, add the dependency after
+`mvn install`:
+
+```xml
+<dependency>
+  <groupId>io.ics</groupId>
+  <artifactId>ics-runtime-java</artifactId>
+  <version>0.1.0</version>
+</dependency>
+```
+
+---
+
+### 9.2 Quick start
+
+```java
+import io.ics.runtime.*;
+import io.ics.runtime.tools.*;
+import io.ics.runtime.contracts.*;
+import java.util.Map;
+
+// 1. Define a tool
+ToolDefinition lookup = ToolDefinition.builder()
+    .name("crm_lookup")
+    .description("Look up a CRM lead by ID")
+    .param("lead_id", ToolDefinition.ParamType.STRING, "Lead identifier", true)
+    .build();
+
+ToolRegistry registry = new ToolRegistry();
+registry.register(lookup, args -> {
+    String id = (String) args.get("lead_id");
+    return Map.of("name", "Acme Corp", "status", "prospect");
+});
+
+// 2. Build the agent
+Agent agent = Agent.builder()
+    .provider("anthropic")               // or "openai"
+    .model("claude-sonnet-4-6")
+    .immutable("You are a BFSI lead qualification assistant.")
+    .capability("DENY: logging PII\nREQUIRE: risk category in every result")
+    .tool(lookup)
+    .build();
+
+// 3. One-shot run
+RunResult result = agent.run("Qualify lead L-42");
+System.out.println(result.getText());
+System.out.println(result.isCacheHit());      // true on second call
+System.out.println(result.getTokensSaved());  // input tokens avoided via cache
+System.out.printf("Cost: $%.6f%n", result.getCostUsd());
+```
+
+---
+
+### 9.3 Agent builder
+
+`Agent.builder()` accepts the following options:
+
+| Method | Type | Default | Description |
+|--------|------|---------|-------------|
+| `.provider(String)` | `"anthropic"` \| `"openai"` | required | LLM provider |
+| `.model(String)` | string | `claude-sonnet-4-6` / `gpt-4o` | Model ID |
+| `.apiKey(String)` | string | env var | Override `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` |
+| `.immutable(String)` | string | `""` | `IMMUTABLE_CONTEXT` layer text |
+| `.capability(String)` | string | `""` | `CAPABILITY_DECLARATION` layer text |
+| `.tool(ToolDefinition)` | — | none | Register a tool (repeatable) |
+| `.outputContract(OutputContract)` | — | none | Attach an output contract |
+| `.backend(SessionBackend)` | — | `MemoryBackend` | Session persistence backend |
+
+---
+
+### 9.4 Session API
+
+Use sessions for multi-turn conversations. `Session` implements `AutoCloseable`.
+
+```java
+// Multi-turn session with initial session variables
+try (Session session = agent.session(Map.of("user_id", "U-99"))) {
+    RunResult r1 = session.run("Qualify lead L-001");
+    RunResult r2 = session.run("Explain the risk score");
+
+    // Access metrics after the session
+    SessionMetrics m = session.getMetrics();
+    System.out.println(m.getTotalTokensSaved());
+    System.out.println(m.getCacheHits());
+    System.out.println(m.getTotalCostUsd());
+}
+```
+
+`session.run(String userMessage)` returns a `RunResult` for every turn.
+
+---
+
+### 9.5 RunResult reference
+
+| Method | Type | Description |
+|--------|------|-------------|
+| `getText()` | `String` | LLM response text |
+| `isValidated()` | `boolean` | OutputContract check passed |
+| `getViolations()` | `List<Violation>` | Contract violations (empty = clean) |
+| `getParsed()` | `Object` | Deserialized JSON object (Map or custom class) |
+| `isCacheHit()` | `boolean` | Permanent layers were served from cache |
+| `isCacheWrite()` | `boolean` | This call wrote to the prompt cache |
+| `getTokensSaved()` | `int` | `cache_read_tokens` avoided on this turn |
+| `getInputTokens()` | `int` | Billed input tokens |
+| `getOutputTokens()` | `int` | Billed output tokens |
+| `getCacheWriteTokens()` | `int` | Tokens written to cache |
+| `getToolCalls()` | `List<ToolCallRecord>` | All tool invocations this turn |
+| `getSessionId()` | `String` | Session identifier |
+| `getTurnNumber()` | `int` | 1-based turn index |
+| `getLatencyMs()` | `int` | Wall-clock latency for this turn |
+| `getCostUsd()` | `double` | Estimated USD cost for this turn |
+
+---
+
+### 9.6 Tools
+
+#### Defining a tool
+
+```java
+ToolDefinition calc = ToolDefinition.builder()
+    .name("credit_score")
+    .description("Calculate credit eligibility score for a lead")
+    .param("lead_id",      ToolDefinition.ParamType.STRING,  "Lead ID",       true)
+    .param("loan_amount",  ToolDefinition.ParamType.NUMBER,  "Loan amount",   true)
+    .param("include_risk", ToolDefinition.ParamType.BOOLEAN, "Include risk",  false)
+    .build();
+```
+
+Supported `ParamType` values: `STRING`, `NUMBER`, `BOOLEAN`, `OBJECT`, `ARRAY`.
+
+#### Registering a handler
+
+```java
+ToolRegistry registry = new ToolRegistry();
+registry.register(calc, args -> {
+    String id     = (String)  args.get("lead_id");
+    double amount = (Double)  args.get("loan_amount");
+    // ... compute score
+    return Map.of("score", 720, "eligible", true);
+});
+
+// Pass to Agent builder
+Agent agent = Agent.builder()
+    .tool(calc)
+    // ...
+    .build();
+```
+
+The runtime calls the handler automatically when the model issues a tool call
+and injects the result back into the conversation.
+
+---
+
+### 9.7 OutputContract
+
+Declares the expected response structure and enforces it at runtime.
+
+```java
+OutputContract contract = OutputContract.builder()
+    .requiredFields("decision", "score", "risk_category", "lead_id", "rationale")
+    .failureMode("BLOCKED:")
+    .failureMode("insufficient_data")
+    .formatHint("JSON with keys: decision, score, risk_category, lead_id, rationale")
+    .validator(json -> {
+        String decision = (String) json.get("decision");
+        var allowed = Set.of("QUALIFIED", "NOT_QUALIFIED", "REVIEW_REQUIRED");
+        if (!allowed.contains(decision)) {
+            return List.of(new Violation(
+                "OUTPUT_CONTRACT: invalid decision value: " + decision,
+                "OUTPUT_CONTRACT", Violation.Severity.ERROR
+            ));
+        }
+        return List.of();
+    })
+    .build();
+
+Agent agent = Agent.builder()
+    // ...
+    .outputContract(contract)
+    .build();
+```
+
+When the response fails validation, `result.isValidated()` is `false` and
+`result.getViolations()` contains the details.
+
+---
+
+### 9.8 CapabilityEnforcer
+
+Scans model output for DENY/REQUIRE violations after each turn. It is
+constructed automatically from the `.capability(...)` text you pass to the
+Agent builder. You can also use it standalone:
+
+```java
+CapabilityEnforcer enforcer = new CapabilityEnforcer(
+    "DENY: logging PII\nREQUIRE: risk category in every result"
+);
+
+List<Violation> violations = enforcer.scanOutput(responseText);
+for (Violation v : violations) {
+    System.out.println(v.getSeverity() + ": " + v.getMessage());
+}
+```
+
+Built-in heuristics detect PII patterns (SSN, credit card numbers, email
+addresses), bulk-export keywords, and unsafe float arithmetic on monetary
+values.
+
+---
+
+### 9.9 Session backends
+
+| Backend | Class | Use case |
+|---------|-------|----------|
+| In-memory (default) | `MemoryBackend` | Development, single-JVM |
+| SQLite | `SQLiteBackend` | Single-server persistence across restarts |
+
+```java
+// SQLite backend — persists sessions to a local file
+import io.ics.runtime.backends.SQLiteBackend;
+
+Agent agent = Agent.builder()
+    .provider("anthropic")
+    .immutable("...")
+    .backend(new SQLiteBackend("sessions.db"))
+    .build();
+```
+
+---
+
+### 9.10 SessionMetrics
+
+Available from `session.getMetrics()` after one or more `run()` calls:
+
+```java
+SessionMetrics m = session.getMetrics();
+
+m.getTurns()            // int   — number of completed turns
+m.getCacheHits()        // int   — turns where cache was read
+m.getCacheWrites()      // int   — turns that wrote to cache
+m.getTotalTokensSaved() // int   — cumulative cache_read_tokens
+m.getTotalInputTokens() // int   — cumulative billed input tokens
+m.getTotalOutputTokens()// int   — cumulative billed output tokens
+m.getTotalCostUsd()     // double — cumulative estimated cost
+m.getViolationCount()   // int   — total contract violations across turns
+```
+
+---
+
+### 9.11 Complete example
+
+```java
+import io.ics.runtime.*;
+import io.ics.runtime.contracts.*;
+import io.ics.runtime.tools.*;
+import java.util.*;
+
+public class BFSIExample {
+
+    public static void main(String[] args) throws Exception {
+
+        // Tool definitions
+        ToolDefinition crmLookup = ToolDefinition.builder()
+            .name("crm_lookup")
+            .description("Look up a lead by ID")
+            .param("lead_id", ToolDefinition.ParamType.STRING, "Lead ID", true)
+            .build();
+
+        ToolDefinition creditScore = ToolDefinition.builder()
+            .name("credit_score")
+            .description("Calculate credit eligibility score")
+            .param("lead_id",     ToolDefinition.ParamType.STRING, "Lead ID",     true)
+            .param("loan_amount", ToolDefinition.ParamType.NUMBER, "Loan amount", true)
+            .build();
+
+        // Tool handlers
+        ToolRegistry registry = new ToolRegistry();
+        registry.register(crmLookup,   a -> Map.of("name", "Acme Corp", "status", "prospect"));
+        registry.register(creditScore, a -> Map.of("score", 720, "eligible", true));
+
+        // Output contract
+        OutputContract contract = OutputContract.builder()
+            .requiredFields("decision", "score", "risk_category", "lead_id", "rationale")
+            .failureMode("BLOCKED:")
+            .formatHint("JSON")
+            .build();
+
+        // Agent
+        Agent agent = Agent.builder()
+            .provider("anthropic")
+            .model("claude-sonnet-4-6")
+            .immutable("""
+                You are a BFSI lead qualification assistant.
+                Domain: SME lending, risk scoring, CRM integration.
+                """)
+            .capability("""
+                DENY: logging PII
+                DENY: bulk export of customer records
+                REQUIRE: risk category in every qualification result
+                """)
+            .tool(crmLookup)
+            .tool(creditScore)
+            .outputContract(contract)
+            .build();
+
+        // Multi-turn session
+        try (Session session = agent.session(Map.of("region", "APAC"))) {
+            RunResult r1 = session.run("Qualify lead L-001 for a $50,000 loan");
+            System.out.println(r1.getText());
+            System.out.printf("Cache hit: %b | Tokens saved: %d | Cost: $%.6f%n",
+                r1.isCacheHit(), r1.getTokensSaved(), r1.getCostUsd());
+
+            RunResult r2 = session.run("What is the main risk factor?");
+            System.out.println(r2.getText());
+
+            // Session summary
+            SessionMetrics m = session.getMetrics();
+            System.out.printf("Session total — turns: %d, saved: %d tokens, cost: $%.4f%n",
+                m.getTurns(), m.getTotalTokensSaved(), m.getTotalCostUsd());
+        }
+    }
+}
+```
+
+---
+
+### 9.12 Web demo (Java)
+
+A Javalin 6 web app that runs the BFSI demo on port **7862**, parallel to the
+Python web demo on port 7860.
+
+```bash
+# Run with a pre-built fat-jar (Java 17 only, no Maven needed)
+cd ics-runtime/java_web_demo
+
+# Anthropic
+ANTHROPIC_API_KEY=sk-ant-... java -jar target/ics-runtime-web-demo.jar
+
+# OpenAI
+OPENAI_API_KEY=sk-... java -jar target/ics-runtime-web-demo.jar openai
+```
+
+Open `http://localhost:7862`
+
+**API endpoints:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/` | Web UI |
+| `GET` | `/api/status` | Provider + API key status |
+| `GET` | `/api/leads` | List mock CRM leads |
+| `POST` | `/api/qualify` | Run lead qualification (blocking) |
+| `GET` | `/api/qualify/stream` | Run qualification (SSE stream) |
+| `GET` | `/api/metrics` | Session metrics |
+| `GET` | `/api/logs` | Live log stream (SSE) |
+
+---
+
 ## Further reading
 
 | Document | Purpose |
@@ -724,3 +1108,4 @@ ics-validate my_prompt.ics
 | `APPENDIX-B.md` | Infrastructure and schema migration examples |
 | `APPENDIX-C.md` | Quality benchmark scenario catalogue |
 | `experiments.md` | Empirical token-savings evidence |
+| `ics-runtime/README.md` | Runtime architecture and feature comparison |

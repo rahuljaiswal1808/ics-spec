@@ -3,7 +3,6 @@ io/ics/runtime/demo/BFSIDemo$Scenario.class
 io/ics/runtime/contracts/OutputContract.class
 io/ics/runtime/tools/ToolDeniedException.class
 io/ics/runtime/backends/SQLiteBackend.class
-io/ics/runtime/providers/AnthropicProvider$1.class
 io/ics/runtime/Agent.class
 io/ics/runtime/contracts/OutputContract$ResponseValidator.class
 io/ics/runtime/providers/OpenAIProvider$1.class
