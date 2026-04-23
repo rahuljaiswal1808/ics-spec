@@ -6,7 +6,7 @@ import com.openai.client.OpenAIClient;
 import com.openai.client.okhttp.OpenAIOkHttpClient;
 import com.openai.core.JsonValue;
 import com.openai.models.ChatModel;
-import com.openai.models.chat.completions.*;
+import com.openai.models.*;
 import io.ics.runtime.ICSRuntimeException;
 
 import java.util.*;
@@ -53,7 +53,10 @@ public class OpenAIProvider extends ProviderBase {
                 if (sysText.length() > 0) sysText.append("\n\n");
                 sysText.append(blk.get("text"));
             }
-            params.addSystemMessage(sysText.toString());
+            params.addMessage(ChatCompletionMessageParam.ofChatCompletionSystemMessageParam(
+                    ChatCompletionSystemMessageParam.builder()
+                            .content(ChatCompletionSystemMessageParam.Content.ofTextContent(sysText.toString()))
+                            .build()));
         }
 
         // ── Messages ─────────────────────────────────────────────────────────
@@ -61,17 +64,21 @@ public class OpenAIProvider extends ProviderBase {
             String role = msg.getRole();
             if ("user".equals(role)) {
                 if (msg.isTextContent()) {
-                    params.addUserMessage(msg.getTextContent());
+                    params.addMessage(ChatCompletionMessageParam.ofChatCompletionUserMessageParam(
+                            ChatCompletionUserMessageParam.builder()
+                                    .content(ChatCompletionUserMessageParam.Content.ofTextContent(msg.getTextContent()))
+                                    .build()));
                 } else {
                     // Tool result blocks
                     for (Map<String, Object> blk : msg.getBlockContent()) {
                         if ("tool_result".equals(blk.get("type"))) {
                             String callId  = (String) blk.get("tool_call_id");
                             String content = (String) blk.get("content");
-                            params.addMessage(ChatCompletionToolMessageParam.builder()
-                                    .toolCallId(callId)
-                                    .content(content)
-                                    .build());
+                            params.addMessage(ChatCompletionMessageParam.ofChatCompletionToolMessageParam(
+                                    ChatCompletionToolMessageParam.builder()
+                                            .toolCallId(callId)
+                                            .content(ChatCompletionToolMessageParam.Content.ofTextContent(content))
+                                            .build()));
                         }
                     }
                 }
@@ -97,11 +104,16 @@ public class OpenAIProvider extends ProviderBase {
                                         .build())
                                 .build());
                     }
-                    params.addMessage(ChatCompletionAssistantMessageParam.builder()
-                            .toolCalls(tcs)
-                            .build());
+                    params.addMessage(ChatCompletionMessageParam.ofChatCompletionAssistantMessageParam(
+                            ChatCompletionAssistantMessageParam.builder()
+                                    .toolCalls(tcs)
+                                    .build()));
                 } else {
-                    params.addAssistantMessage(msg.isTextContent() ? msg.getTextContent() : "");
+                    params.addMessage(ChatCompletionMessageParam.ofChatCompletionAssistantMessageParam(
+                            ChatCompletionAssistantMessageParam.builder()
+                                    .content(ChatCompletionAssistantMessageParam.Content.ofTextContent(
+                                            msg.isTextContent() ? msg.getTextContent() : ""))
+                                    .build()));
                 }
             }
         }
@@ -123,8 +135,8 @@ public class OpenAIProvider extends ProviderBase {
                                 .name(name)
                                 .description(desc)
                                 .parameters(FunctionParameters.builder()
-                                        .type(JsonValue.from("object"))
-                                        .properties(JsonValue.from(
+                                        .putAdditionalProperty("type", JsonValue.from("object"))
+                                        .putAdditionalProperty("properties", JsonValue.from(
                                                 paramSchema.getOrDefault("properties", Map.of())))
                                         .putAdditionalProperty("required",
                                                 JsonValue.from(paramSchema.getOrDefault("required", List.of())))
@@ -144,7 +156,7 @@ public class OpenAIProvider extends ProviderBase {
         }
 
         // ── Parse response ────────────────────────────────────────────────────
-        ChatCompletionChoice choice = completion.choices().get(0);
+        ChatCompletion.Choice choice = completion.choices().get(0);
         ChatCompletionMessage responseMsg = choice.message();
 
         String text = responseMsg.content().orElse("");
@@ -168,15 +180,15 @@ public class OpenAIProvider extends ProviderBase {
         }
 
         CompletionUsage usage = completion.usage().orElse(null);
-        int inputTokens  = usage != null ? (int) usage.promptTokens()     : 0;
-        int outputTokens = usage != null ? (int) usage.completionTokens() : 0;
+        int inputTokens  = usage != null ? (int) (long) usage.promptTokens()     : 0;
+        int outputTokens = usage != null ? (int) (long) usage.completionTokens() : 0;
         int cacheRead    = 0;
 
         // OpenAI prefix cache — cached_tokens in prompt_tokens_details
         if (usage != null && usage.promptTokensDetails().isPresent()) {
             var details = usage.promptTokensDetails().get();
             if (details.cachedTokens().isPresent()) {
-                cacheRead = (int) details.cachedTokens().get();
+                cacheRead = (int) (long) details.cachedTokens().get();
             }
         }
 

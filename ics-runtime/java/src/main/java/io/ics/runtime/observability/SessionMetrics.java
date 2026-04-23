@@ -15,7 +15,7 @@ public final class SessionMetrics {
 
     private final List<RunResult> runs = new ArrayList<>();
 
-    void record(RunResult result) { runs.add(result); }
+    public void record(RunResult result) { runs.add(result); }
 
     public int getTotalRuns()    { return runs.size(); }
     public int getCacheHits()    { return (int) runs.stream().filter(RunResult::isCacheHit).count(); }

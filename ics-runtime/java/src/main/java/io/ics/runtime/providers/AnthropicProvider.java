@@ -52,14 +52,12 @@ public class AnthropicProvider extends ProviderBase {
 
             TextBlockParam.Builder tb = TextBlockParam.builder().text(text);
             if (cc != null) {
-                tb.cacheControl(CacheControlEphemeralParam.builder()
-                        .type(CacheControlEphemeralParam.Type.EPHEMERAL)
-                        .build());
+                tb.cacheControl(CacheControlEphemeral.builder().build());
             }
             sysBlocks.add(tb.build());
         }
         if (!sysBlocks.isEmpty()) {
-            params.system(sysBlocks);
+            params.system(MessageCreateParams.System.ofTextBlockParams(sysBlocks));
         }
 
         // ── Messages ─────────────────────────────────────────────────────────
@@ -84,17 +82,17 @@ public class AnthropicProvider extends ProviderBase {
                         String name = (String) blk.get("name");
                         @SuppressWarnings("unchecked")
                         Map<String, Object> input = (Map<String, Object>) blk.get("input");
-                        blocks.add(ToolUseBlockParam.builder()
+                        blocks.add(ContentBlockParam.ofToolUse(ToolUseBlockParam.builder()
                                 .id(id).name(name)
                                 .input(JsonValue.from(input))
-                                .build());
+                                .build()));
                     } else if ("tool_result".equals(type)) {
                         String toolUseId = (String) blk.get("tool_use_id");
                         String content   = (String) blk.get("content");
-                        blocks.add(ToolResultBlockParam.builder()
+                        blocks.add(ContentBlockParam.ofToolResult(ToolResultBlockParam.builder()
                                 .toolUseId(toolUseId)
                                 .content(content)
-                                .build());
+                                .build()));
                     }
                 }
                 params.addMessage(MessageParam.builder()
@@ -106,24 +104,24 @@ public class AnthropicProvider extends ProviderBase {
 
         // ── Tools ─────────────────────────────────────────────────────────────
         if (tools != null && !tools.isEmpty()) {
-            List<ToolParam> toolParams = new ArrayList<>();
+            List<ToolUnion> toolParams = new ArrayList<>();
             for (Map<String, Object> t : tools) {
                 String name = (String) t.get("name");
                 String desc = (String) t.getOrDefault("description", "");
                 @SuppressWarnings("unchecked")
                 Map<String, Object> inputSchema = (Map<String, Object>) t.get("input_schema");
 
-                toolParams.add(ToolParam.builder()
+                toolParams.add(ToolUnion.ofTool(Tool.builder()
                         .name(name)
                         .description(desc)
-                        .inputSchema(ToolInputSchemaParam.builder()
-                                .type(ToolInputSchemaParam.Type.OBJECT)
+                        .inputSchema(Tool.InputSchema.builder()
+                                .type(JsonValue.from("object"))
                                 .properties(JsonValue.from(
                                         inputSchema.getOrDefault("properties", Map.of())))
                                 .putAdditionalProperty("required",
                                         JsonValue.from(inputSchema.getOrDefault("required", List.of())))
                                 .build())
-                        .build());
+                        .build()));
             }
             params.tools(toolParams);
         }
@@ -141,13 +139,15 @@ public class AnthropicProvider extends ProviderBase {
         List<Map<String, Object>> toolCalls = new ArrayList<>();
 
         for (ContentBlock block : response.content()) {
-            if (block instanceof TextBlock tb) {
+            if (block.isText()) {
+                TextBlock tb = block.asText();
                 if (textParts.length() > 0) textParts.append("\n");
                 textParts.append(tb.text());
-            } else if (block instanceof ToolUseBlock tu) {
+            } else if (block.isToolUse()) {
+                ToolUseBlock tu = block.asToolUse();
                 Map<String, Object> inputMap;
                 try {
-                    inputMap = JSON.convertValue(tu.input(), Map.class);
+                    inputMap = JSON.convertValue(tu._input(), Map.class);
                 } catch (Exception ex) {
                     inputMap = Map.of();
                 }
